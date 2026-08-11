@@ -23,17 +23,24 @@ const getDevApiUrl = () => {
   }
 
   // If running on a native device (Expo Go or development build),
-  // extract the development machine's IP address from expo-constants
+  // extract the development machine's IP address from expo-constants.
+  // On a real phone, Expo Go exposes the local machine's LAN IP.
   const hostUri = Constants.expoConfig?.hostUri;
   if (hostUri) {
     const host = hostUri.split(':')[0];
     return `http://${host}:5000`;
   }
 
-  // Fallbacks for emulators
-  return Platform.OS === 'android' 
-    ? 'http://10.0.2.2:5000' 
-    : 'http://localhost:5000';
+  // Fallbacks for emulators and local device testing.
+  if (Platform.OS === 'android') {
+    return 'http://10.0.2.2:5000';
+  }
+
+  if (Platform.OS === 'ios') {
+    return 'http://localhost:5000';
+  }
+
+  return 'http://localhost:5000';
 };
 
 const DEV_API_URL = getDevApiUrl();

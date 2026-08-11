@@ -53,16 +53,18 @@
   },
   "scripts": {
     "start": "expo start",
-    "reset-project": "node ./scripts/reset-project.js",
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
     "build": "npx expo export -p web",
+    "build:android": "expo build:android",
+    "build:ios": "expo build:ios",
     "notify:monitor": "node ./scripts/notification-monitor.js",
     "lint": "expo lint",
     "backend": "npm --prefix ../backend run dev",
     "dev": "npx concurrently \"npm run backend\" \"npm run start\"",
-    "dev:web": "npx concurrently \"npm run backend\" \"npm run web\""
+    "dev:web": "npx concurrently \"npm run backend\" \"npm run web\"",
+    "mobile": "expo start --dev-client"
   },
   "private": true
 }
