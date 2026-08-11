@@ -1,0 +1,15 @@
+{
+  "name": "watertankdashboard-workspace",
+  "private": true,
+  "scripts": {
+    "backend": "npm --prefix backend run dev",
+    "frontend": "npm --prefix frontend run start",
+    "frontend:web": "npm --prefix frontend run web",
+    "frontend:build": "npm --prefix frontend run build",
+    "frontend:lint": "npm --prefix frontend run lint",
+    "dev": "npx concurrently \"npm run backend\" \"npm run frontend:web\""
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.4"
+  }
+}
