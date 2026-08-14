@@ -4,7 +4,7 @@ import { Colors, Spacing } from "@/constants/theme";
 import { useThingSpeak } from "@/hooks/use-thingspeak";
 import { useThingSpeakHistory } from "@/hooks/use-thingspeak-history";
 import { useMemo, useState } from "react";
-import { Pressable, StyleSheet, View } from "react-native";
+import { Platform, Pressable, StyleSheet, View } from "react-native";
 
 function msToHuman(ms: number) {
   if (!isFinite(ms) || ms <= 0) return "—";
@@ -94,6 +94,59 @@ export default function DevInsights() {
     if (!history || history.length === 0) return null;
     return predictHeuristic((history as any).slice(-8), weather);
   }, [history, weather]);
+
+  const exportCsv = (hist: any[]) => {
+    if (!hist || hist.length === 0) return;
+    const rows: any[] = [];
+    rows.push([
+      "time_iso",
+      "sourceRaw",
+      "overheadRaw",
+      "sourcePct",
+      "overheadPct",
+      "anomaly",
+    ]);
+    for (const p of hist) {
+      const time = p.time ? new Date(p.time).toISOString() : "";
+      const srcRaw = p.sourceRaw != null ? p.sourceRaw : "";
+      const ovhRaw = p.overheadRaw != null ? p.overheadRaw : "";
+      const srcPct = p.source != null ? p.source : "";
+      const ovhPct = p.overhead != null ? p.overhead : "";
+      const anomaly =
+        (typeof srcRaw === "number" && srcRaw <= 0) ||
+        (typeof ovhRaw === "number" && ovhRaw <= 0)
+          ? "1"
+          : "0";
+      rows.push([time, srcRaw, ovhRaw, srcPct, ovhPct, anomaly]);
+    }
+
+    const csv = rows
+      .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+
+    if (
+      Platform.OS === "web" &&
+      typeof window !== "undefined" &&
+      (window as any).document
+    ) {
+      const blob = new Blob([csv], { type: "text/csv" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `thingspeak_export_${new Date().toISOString()}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } else {
+      // Fallback for native: print CSV to console so user can copy
+      // (implement native sharing if needed)
+      // eslint-disable-next-line no-console
+      console.log(csv);
+      // eslint-disable-next-line no-alert
+      alert(
+        "CSV output printed to console. Run the app on web to download directly.",
+      );
+    }
+  };
 
   const scheme = "light";
   const theme = Colors[scheme === "dark" ? "dark" : "light"];
@@ -193,6 +246,19 @@ export default function DevInsights() {
           ]}
         >
           <ThemedText type="smallBold">Refresh Feed</ThemedText>
+        </Pressable>
+        <Pressable
+          onPress={() => exportCsv(history as any)}
+          style={({ pressed }) => [
+            {
+              padding: Spacing.two,
+              backgroundColor: "#0ea5e9",
+              borderRadius: 8,
+            },
+            pressed && { opacity: 0.8 },
+          ]}
+        >
+          <ThemedText type="smallBold">Export CSV</ThemedText>
         </Pressable>
       </View>
     </PageFrame>
