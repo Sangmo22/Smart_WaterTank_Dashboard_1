@@ -14,7 +14,15 @@ const DEFAULTS = {
 };
 
 function loadEnvFile() {
-  const envPath = path.join(process.cwd(), ".env.local");
+  // Support the repository-level example file as well as a frontend-local file.
+  // npm runs this script with `frontend` as the working directory, while the
+  // project documentation keeps `.env.local.example` at the repository root.
+  const frontendEnvPath = path.resolve(__dirname, "..", ".env.local");
+  const repositoryEnvPath = path.resolve(__dirname, "..", "..", ".env.local");
+  const envPath = fs.existsSync(frontendEnvPath)
+    ? frontendEnvPath
+    : repositoryEnvPath;
+
   if (!fs.existsSync(envPath)) return;
 
   const contents = fs.readFileSync(envPath, "utf8");
@@ -149,7 +157,7 @@ async function sendEmailAlertViaResend(sourceLevel) {
     try {
       console.log(`[Email Alert] Sending low source alert to ${targetEmail} via Resend...`);
       const { data, error } = await resendInstance.emails.send({
-        from: 'Your App <onboarding@resend.dev>',
+        from: process.env.RESEND_FROM_EMAIL || 'Water Tank Alerts <onboarding@resend.dev>',
         to: [targetEmail],
         subject: 'Water Tank Alert: Source Low',
         text: `Source tank level is low: ${sourceLevel}%`,

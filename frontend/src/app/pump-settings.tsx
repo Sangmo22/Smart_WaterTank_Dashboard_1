@@ -84,7 +84,6 @@ export default function PumpSettingsScreen() {
           <Switch
             value={alertsEnabled}
             onValueChange={toggleAlerts}
-            disabled={!config.isDemoMode}
           />
         </View>
 

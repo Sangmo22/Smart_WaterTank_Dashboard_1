@@ -21,11 +21,7 @@ import { useThingSpeak } from "@/hooks/use-thingspeak";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { usePushNotifications } from "@/hooks/use-push-notifications";
 import { alertsStore } from "@/state/alerts-store";
-import { useAuth } from "@/state/auth-context";
-import {
-  sendEmailAlertAsync,
-  getAlertsEnabled,
-} from "@/services/notification.service";
+import { getAlertsEnabled } from "@/services/notification.service";
 
 interface LogEvent {
   id: string;
@@ -42,7 +38,6 @@ interface HistoryPoint {
 
 export default function HomeScreen() {
   const router = useRouter();
-  const { user } = useAuth();
   const isWeb = Platform.OS === "web";
   const scheme = useColorScheme();
   const themeScheme =
@@ -112,27 +107,9 @@ export default function HomeScreen() {
           type,
         } as any);
 
-        // Trigger email alert to the logged-in user if email alerts are enabled
-        if (user?.email) {
-          (async () => {
-            try {
-              const enabled = await getAlertsEnabled();
-              if (enabled) {
-                const res = await sendEmailAlertAsync(
-                  user.email,
-                  `⚠️ CRITICAL ALERT: ${message}`,
-                  `Smart Water Tank Monitor notification:\n\n${message}\n\nTime: ${timeStr}\n\nThis is an automated alert from your Water Tank Dashboard.`,
-                );
-                console.log("[Email Alert Notification]", res.message);
-              }
-            } catch (err) {
-              console.error("Failed to trigger email alert:", err);
-            }
-          })();
-        }
       }
     },
-    [user],
+    [],
   );
 
   // Add initial event
@@ -300,36 +277,33 @@ export default function HomeScreen() {
     if (emailAlertSentRef.current) return;
     emailAlertSentRef.current = true;
 
-    if (Platform.OS === "web") {
-      (async () => {
-        try {
-          console.log(
-            `[Automatic Email Alert] Source level is ${data.sourceLevel}%. Sending email...`,
+    (async () => {
+      try {
+        const enabled = await getAlertsEnabled();
+        if (!enabled) return;
+
+        console.log(
+          `[Automatic Email Alert] Source level is ${data.sourceLevel}%. Sending via Resend...`,
+        );
+        const res = await fetch(`${API_URL}/api/send-low-source-alert`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sourceLevel: data.sourceLevel }),
+        });
+        if (res.ok) {
+          console.log("[Automatic Email Alert] Resend email sent successfully.");
+        } else {
+          const errText = await res.text();
+          console.warn(
+            "[Automatic Email Alert] API failed:",
+            res.status,
+            errText,
           );
-          const res = await fetch(`${API_URL}/api/send-low-source-alert`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ sourceLevel: data.sourceLevel }),
-          });
-          if (res.ok) {
-            const json = await res.json();
-            console.log(
-              "[Automatic Email Alert] Email sent successfully:",
-              json,
-            );
-          } else {
-            const errText = await res.text();
-            console.warn(
-              "[Automatic Email Alert] API failed:",
-              res.status,
-              errText,
-            );
-          }
-        } catch (err) {
-          console.warn("[Automatic Email Alert] Error calling API:", err);
         }
-      })();
-    }
+      } catch (err) {
+        console.warn("[Automatic Email Alert] Error calling API:", err);
+      }
+    })();
   }, [data.sourceLevel, isLoaded]);
 
   useEffect(() => {

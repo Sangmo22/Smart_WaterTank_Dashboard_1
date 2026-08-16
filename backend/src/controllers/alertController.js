@@ -2,15 +2,32 @@ const { Resend } = require('resend');
 
 const sendLowSourceAlert = async (req, res, next) => {
   try {
+    if (!process.env.RESEND_API_KEY) {
+      return res.status(503).json({
+        error: 'RESEND_API_KEY is not configured on the server.',
+      });
+    }
+
+    if (!process.env.ALERT_EMAIL) {
+      return res.status(503).json({
+        error: 'ALERT_EMAIL is not configured on the server.',
+      });
+    }
+
     const resend = new Resend(process.env.RESEND_API_KEY);
     const { sourceLevel } = req.body;
+    const level = Number(sourceLevel);
+
+    if (!Number.isFinite(level) || level < 0 || level > 100) {
+      return res.status(400).json({ error: 'sourceLevel must be a number from 0 to 100.' });
+    }
 
     const { data, error } = await resend.emails.send({
-      from: 'Your App <onboarding@resend.dev>',
-      to: [process.env.ALERT_EMAIL || 'sangmolama29@gmail.com'],
+      from: process.env.RESEND_FROM_EMAIL || 'Water Tank Alerts <onboarding@resend.dev>',
+      to: [process.env.ALERT_EMAIL],
       subject: 'Water Tank Alert: Source Low',
-      text: `Source tank level is low: ${sourceLevel}%`,
-      html: `<p>Source tank level is low: <strong>${sourceLevel}%</strong></p>`,
+      text: `Source tank level is low: ${level}%`,
+      html: `<p>Source tank level is low: <strong>${level}%</strong></p>`,
     });
 
     if (error) {
