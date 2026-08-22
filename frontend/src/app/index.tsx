@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { API_URL } from "@/constants/api";
+
 import { BottomTabInset, Spacing, Colors } from "@/constants/theme";
 import {
   StyleSheet,
@@ -21,7 +21,7 @@ import { useThingSpeak } from "@/hooks/use-thingspeak";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { usePushNotifications } from "@/hooks/use-push-notifications";
 import { alertsStore } from "@/state/alerts-store";
-import { getAlertsEnabled } from "@/services/notification.service";
+
 
 interface LogEvent {
   id: string;
@@ -63,7 +63,7 @@ export default function HomeScreen() {
 
   // Track previous warning levels to avoid redundant log spam
   const prevLevelsRef = useRef({ source: 50, overhead: 50, flowState: false });
-  const emailAlertSentRef = useRef(false);
+
 
   const {
     config,
@@ -266,45 +266,7 @@ export default function HomeScreen() {
     }
   }, [data.sourceLevel, isLoaded]);
 
-  useEffect(() => {
-    if (!isLoaded) return;
 
-    if (data.sourceLevel >= 5) {
-      emailAlertSentRef.current = false;
-      return;
-    }
-
-    if (emailAlertSentRef.current) return;
-    emailAlertSentRef.current = true;
-
-    (async () => {
-      try {
-        const enabled = await getAlertsEnabled();
-        if (!enabled) return;
-
-        console.log(
-          `[Automatic Email Alert] Source level is ${data.sourceLevel}%. Sending via Resend...`,
-        );
-        const res = await fetch(`${API_URL}/api/send-low-source-alert`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ sourceLevel: data.sourceLevel }),
-        });
-        if (res.ok) {
-          console.log("[Automatic Email Alert] Resend email sent successfully.");
-        } else {
-          const errText = await res.text();
-          console.warn(
-            "[Automatic Email Alert] API failed:",
-            res.status,
-            errText,
-          );
-        }
-      } catch (err) {
-        console.warn("[Automatic Email Alert] Error calling API:", err);
-      }
-    })();
-  }, [data.sourceLevel, isLoaded]);
 
   useEffect(() => {
     if (!isLoaded || !data.lastUpdated) return;
