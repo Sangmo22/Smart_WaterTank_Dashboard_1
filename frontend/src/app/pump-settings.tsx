@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useRef, useState } from "react";
-import { Switch, ActivityIndicator } from "react-native";
-import { getAlertsEnabled, setAlertsEnabled } from "@/services/notification.service";
+import React, { useCallback, useEffect, useRef } from "react";
+import { ActivityIndicator } from "react-native";
+
 import { Pressable, View, StyleSheet } from "react-native";
 
 import { SymbolView } from "expo-symbols";
@@ -150,23 +150,9 @@ export default function PumpSettingsScreen() {
     stopSimulatedFlow,
   } = useThingSpeak();
 
-  const { pumpData, loading, sendingCmd, error, sendPumpCommand } =
+  const { pumpData, loading, sendingCmd, sendPumpCommand } =
     usePumpControl();
 
-  const [alertsEnabled, setAlertsEnabledState] = useState(false);
-
-  useEffect(() => {
-    (async () => {
-      const enabled = await getAlertsEnabled();
-      setAlertsEnabledState(enabled);
-    })();
-  }, []);
-
-  const toggleAlerts = async () => {
-    const newVal = !alertsEnabled;
-    await setAlertsEnabled(newVal);
-    setAlertsEnabledState(newVal);
-  };
 
   // ── Safety gate ──────────────────────────────────────────────────────────────
   const overheadPct = Math.round(data.overheadLevel);
@@ -211,26 +197,6 @@ export default function PumpSettingsScreen() {
       subtitle="Manual pump control & safety status"
       icon={{ ios: "switch.2", android: "tune", web: "tune" }}
     >
-      {/* Description */}
-      <ThemedText type="small" themeColor="textSecondary">
-        {config.isDemoMode
-          ? "Demo mode: pump control drives the simulated flow and is logged in the backend."
-          : "Live mode: the button sends a manual command (1=ON / 0=OFF) to the backend API."}
-      </ThemedText>
-
-      {/* Backend error banner */}
-      {error ? (
-        <View style={[styles.bannerRow, { backgroundColor: "rgba(255,77,79,0.15)" }]}>
-          <SymbolView
-            name={{ ios: "exclamationmark.triangle", android: "warning", web: "warning" }}
-            size={14}
-            tintColor="#ff4d4f"
-          />
-          <ThemedText type="small" style={{ color: "#ff4d4f", flex: 1 }}>
-            {error}
-          </ThemedText>
-        </View>
-      ) : null}
 
       {/* ── Safety Conditions Panel ── */}
       <View style={[styles.safetyPanel, { borderColor: (theme as any).border ?? "#333" }]}>
@@ -409,29 +375,7 @@ export default function PumpSettingsScreen() {
         </ThemedText>
       </Pressable>
 
-      {/* Command legend */}
-      <View style={styles.legendRow}>
-        <ThemedText type="small" themeColor="textSecondary">
-          Command values:{" "}
-        </ThemedText>
-        <ThemedText type="smallBold" style={{ color: "#52c41a" }}>ON = 1</ThemedText>
-        <ThemedText type="small" themeColor="textSecondary">{"  ·  "}</ThemedText>
-        <ThemedText type="smallBold" style={{ color: "#ff4d4f" }}>OFF = 0</ThemedText>
-      </View>
 
-      {/* ── Low Source Alerts toggle ── */}
-      <View style={styles.alertRow}>
-        <ThemedText type="small" themeColor="textSecondary">
-          Enable Low Source Alerts
-        </ThemedText>
-        <Switch value={alertsEnabled} onValueChange={toggleAlerts} />
-      </View>
-
-      <ThemedText type="small" themeColor="textSecondary">
-        {config.isDemoMode
-          ? "The pump moves water from the source tank to the overhead tank in simulation."
-          : "Live data is fetched from ThingSpeak. Commands are sent to the backend API."}
-      </ThemedText>
     </PageFrame>
   );
 }
