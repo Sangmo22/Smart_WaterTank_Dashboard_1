@@ -47,7 +47,7 @@ export default function HomeScreen() {
   const [settingsVisible, setSettingsVisible] = useState(false);
   const [menuVisible, setMenuVisible] = useState(isWeb);
   const [activeSection, setActiveSection] = useState<
-    "dashboard" | "analytics" | "alerts" | "settings"
+    "dashboard" | "analytics" | "alerts" | "pump-settings" | "settings"
   >("dashboard");
   const [chartHistory, setChartHistory] = useState<HistoryPoint[]>([]);
   const [chartLayout, setChartLayout] = useState({ width: 0, height: 0 });
@@ -436,6 +436,7 @@ export default function HomeScreen() {
     { key: "dashboard", label: "Dashboard", route: "/" },
     { key: "analytics", label: "Analytics", route: "/analytics" },
     { key: "alerts", label: "Alerts", route: "/alerts" },
+    { key: "pump-settings", label: "Pump Settings", route: "/pump-settings" },
     { key: "settings", label: "Settings", route: "/settings" },
   ] as const;
 
@@ -450,6 +451,11 @@ export default function HomeScreen() {
       ios: "bell.fill",
       android: "notifications",
       web: "notifications",
+    },
+    "pump-settings": {
+      ios: "switch.2",
+      android: "tune",
+      web: "tune",
     },
     settings: { ios: "gearshape.fill", android: "settings", web: "settings" },
   } as const;
