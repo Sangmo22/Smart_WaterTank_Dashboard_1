@@ -87,6 +87,9 @@ export function usePushNotifications() {
         });
 
         if (mounted) {
+          // Logged so it can be copied into EXPO_PUSH_TOKEN in .env.local
+          // for the notification-monitor script.
+          console.log("Push token:", token.data);
           setExpoPushToken(token.data);
           setPushStatus("ready");
           setPushError(null);
