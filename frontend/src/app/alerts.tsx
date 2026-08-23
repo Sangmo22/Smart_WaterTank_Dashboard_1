@@ -1,5 +1,5 @@
 import React, { useMemo } from "react";
-import { FlatList, StyleSheet, View } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { PageFrame } from "@/components/page-frame";
 import { ThemedText } from "@/components/themed-text";
 import { useColorScheme } from "@/hooks/use-color-scheme";
@@ -62,14 +62,11 @@ export default function AlertsScreen() {
             No alerts yet.
           </ThemedText>
         ) : (
-          <FlatList
-            data={data}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.listContent}
-            renderItem={({ item }) => {
+          <View style={styles.listContent}>
+            {data.map((item) => {
               const color = getSeverityColor(item.type);
               return (
-                <View style={styles.row}>
+                <View key={item.id} style={styles.row}>
                   <View style={[styles.dot, { backgroundColor: color }]} />
                   <View style={styles.rowMain}>
                     <View style={styles.rowTop}>
@@ -81,8 +78,8 @@ export default function AlertsScreen() {
                   </View>
                 </View>
               );
-            }}
-          />
+            })}
+          </View>
         )}
       </View>
     </PageFrame>

@@ -1,16 +1,18 @@
 const fs = require("fs");
 const path = require("path");
+const { execFile } = require("child_process");
 
 const DEFAULTS = {
   THINGSPEAK_CHANNEL_ID: "3420273",
   THINGSPEAK_READ_API_KEY: "WZV2KJC22K3ZDNGM",
-  SOURCE_FIELD: "1",
+  SOURCE_FIELD: "2",
   SOURCE_MIN_RAW: "0",
   SOURCE_MAX_RAW: "100",
   SOURCE_INVERT: "false",
   SOURCE_ALERT_THRESHOLD: "8",
   POLL_INTERVAL_MS: "15000",
   ALERT_REMINDER_MS: "1800000",
+  PUSH_FAIL_COOLDOWN_MS: "60000",
 };
 
 function loadEnvFile() {
@@ -43,17 +45,35 @@ function loadEnvFile() {
 
 loadEnvFile();
 
-let resendInstance = null;
-try {
-  const { Resend } = require("resend");
-  if (process.env.RESEND_API_KEY) {
-    resendInstance = new Resend(process.env.RESEND_API_KEY);
-    console.log("Resend email notifications initialized successfully in background monitor.");
-  } else {
-    console.log("Resend API key missing in background monitor. Email alerts will run in simulation mode.");
-  }
-} catch (e) {
-  console.log("Resend library not loaded or error initializing Resend:", e.message);
+// Pushes are sent by shelling out to curl.exe because Node's fetch/https
+// request bodies get mangled in transit to exp.host on some machines with
+// TLS-inspecting security software (bodies arrive at Expo missing fields).
+function postJsonViaCurl(url, body) {
+  return new Promise((resolve, reject) => {
+    const args = [
+      "-s",
+      "-H", "Content-Type: application/json",
+      "-X", "POST",
+      url,
+      "-d", JSON.stringify(body),
+    ];
+    execFile(
+      "curl.exe",
+      args,
+      { windowsHide: true, timeout: 30000 },
+      (err, stdout, stderr) => {
+        if (err) {
+          reject(new Error(`curl failed: ${err.message}${stderr ? ` ${stderr}` : ""}`));
+          return;
+        }
+        try {
+          resolve(JSON.parse(stdout));
+        } catch {
+          reject(new Error(`Unexpected Expo response: ${String(stdout).slice(0, 200)}`));
+        }
+      },
+    );
+  });
 }
 
 function getConfig() {
@@ -69,6 +89,7 @@ function getConfig() {
     threshold: Number(env.SOURCE_ALERT_THRESHOLD),
     pollIntervalMs: Number(env.POLL_INTERVAL_MS),
     reminderMs: Number(env.ALERT_REMINDER_MS),
+    failCooldownMs: Number(env.PUSH_FAIL_COOLDOWN_MS),
   };
 }
 
@@ -119,63 +140,38 @@ async function fetchSourceLevel(config) {
 }
 
 async function sendExpoPush(config, source) {
-  const response = await fetch("https://exp.host/--/api/v2/push/send", {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Accept-encoding": "gzip, deflate",
-      "Content-Type": "application/json",
+  // `sound` must be omitted or a string ("default") — the boolean form is no
+  // longer accepted by the Expo push API. On Android, sound/vibration come
+  // from the "water-alerts" channel the app creates.
+  const message = {
+    to: config.expoPushToken,
+    title: "Source tank critically low",
+    body: `Source tank is at ${source.level}%. Refill before the pump runs dry.`,
+    data: {
+      type: "source-low",
+      sourceLevel: source.level,
+      sourceRaw: source.raw,
+      updatedAt: source.updatedAt,
     },
-    body: JSON.stringify({
-      to: config.expoPushToken,
-      sound: true,
-      title: "Source tank critically low",
-      body: `Source tank is at ${source.level}%. Refill before the pump runs dry.`,
-      data: {
-        type: "source-low",
-        sourceLevel: source.level,
-        sourceRaw: source.raw,
-        updatedAt: source.updatedAt,
-      },
-      channelId: "water-alerts",
-      priority: "high",
-    }),
-  });
+    channelId: "water-alerts",
+    priority: "high",
+  };
 
-  const payload = await response.json();
-  if (!response.ok || payload.data?.status === "error") {
-    throw new Error(
-      payload.data?.message || `Expo push error: ${response.status}`,
-    );
+  const payload = await postJsonViaCurl(
+    "https://exp.host/--/api/v2/push/send",
+    message,
+  );
+
+  if (payload.errors?.length) {
+    throw new Error(`Expo request error: ${payload.errors[0].message ?? payload.errors[0].code}`);
   }
-}
 
-async function sendEmailAlertViaResend(sourceLevel) {
-  const targetEmail = process.env.ALERT_EMAIL || "sangmolama29@gmail.com";
-  
-  if (resendInstance) {
-    try {
-      console.log(`[Email Alert] Sending low source alert to ${targetEmail} via Resend...`);
-      const { data, error } = await resendInstance.emails.send({
-        from: process.env.RESEND_FROM_EMAIL || 'Water Tank Alerts <onboarding@resend.dev>',
-        to: [targetEmail],
-        subject: 'Water Tank Alert: Source Low',
-        text: `Source tank level is low: ${sourceLevel}%`,
-        html: `<p>Source tank level is low: <strong>${sourceLevel}%</strong></p>`,
-      });
-
-      if (error) {
-        console.error("Resend email failed:", error);
-      } else {
-        console.log("Resend email sent successfully:", data?.id);
-      }
-    } catch (err) {
-      console.error("Error sending Resend email:", err.message);
-    }
-  } else {
-    const simulationMessage = `[SIMULATION] Email sent to ${targetEmail}\nSubject: Water Tank Alert: Source Low\nBody: Source tank level is low: ${sourceLevel}%`;
-    console.log(simulationMessage);
+  const ticket = Array.isArray(payload.data) ? payload.data[0] : payload.data;
+  if (!ticket || ticket.status !== "ok") {
+    throw new Error(ticket?.message || "Expo push ticket error.");
   }
+
+  return ticket;
 }
 
 async function main() {
@@ -189,9 +185,7 @@ async function main() {
 
   let wasCritical = false;
   let lastSentAt = 0;
-
-  let wasEmailCritical = false;
-  let lastEmailSentAt = 0;
+  let lastFailedAttemptAt = 0;
 
   console.log(
     `Monitoring ThingSpeak channel ${config.channelId}, field ${config.sourceField}, threshold < ${config.threshold}%`,
@@ -201,37 +195,32 @@ async function main() {
     try {
       const source = await fetchSourceLevel(config);
       const now = Date.now();
-      
-      // 1. Check Push Notification (threshold in env/config)
+
       const isCritical = source.level < config.threshold;
-      const shouldSendPush =
-        isCritical &&
-        (!wasCritical || now - lastSentAt >= config.reminderMs);
 
       console.log(
         `[${new Date().toLocaleString()}] Source ${source.level}% (${source.raw} raw)`,
       );
 
-      if (shouldSendPush && config.expoPushToken) {
-        await sendExpoPush(config, source);
-        lastSentAt = now;
-        console.log("Push notification sent.");
+      if (isCritical && config.expoPushToken) {
+        const reminderDue =
+          !wasCritical || now - lastSentAt >= config.reminderMs;
+        const cooldownOver =
+          now - lastFailedAttemptAt >= config.failCooldownMs;
+
+        if (reminderDue && cooldownOver) {
+          try {
+            await sendExpoPush(config, source);
+            lastSentAt = now;
+            console.log("Push notification sent.");
+          } catch (error) {
+            lastFailedAttemptAt = now;
+            console.error(`Push send failed: ${error.message}`);
+          }
+        }
       }
+
       wasCritical = isCritical;
-
-      // 2. Check Email Alert (Threshold is strictly < 5%)
-      const isEmailCritical = source.level < 5;
-      const shouldSendEmail =
-        isEmailCritical &&
-        (!wasEmailCritical || now - lastEmailSentAt >= config.reminderMs);
-
-      if (shouldSendEmail) {
-        await sendEmailAlertViaResend(source.level);
-        lastEmailSentAt = now;
-        console.log("Email alert processed.");
-      }
-      wasEmailCritical = isEmailCritical;
-
     } catch (error) {
       console.error(error instanceof Error ? error.message : error);
     }
