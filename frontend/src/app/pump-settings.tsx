@@ -76,7 +76,12 @@ function usePumpControl() {
 
       setTankId(id);
     } catch (err: any) {
-      setError(err?.message ?? "Cannot reach backend. Ensure backend is running.");
+      const raw: string = err?.message ?? "";
+      setError(
+        /fetch|network/i.test(raw)
+          ? "Connecting to server… this can take up to a minute if it was asleep."
+          : raw || "Cannot reach backend. Ensure the backend is running.",
+      );
     } finally {
       setLoading(false);
     }
@@ -166,7 +171,7 @@ export default function PumpSettingsScreen() {
     stopSimulatedFlow,
   } = useThingSpeak();
 
-  const { pumpData, loading, sendingCmd, error, sendPumpCommand } =
+  const { pumpData, sendingCmd, error, sendPumpCommand } =
     usePumpControl();
 
 
@@ -185,6 +190,10 @@ export default function PumpSettingsScreen() {
 
   const pumpMode = pumpData?.pumpMode ?? "auto";
 
+  // True until the backend reports a real pump state (live mode only).
+  // While connecting, the UI must not claim "Pump is OFF" - it is unknown.
+  const isConnecting = !config.isDemoMode && !pumpData;
+
   // ── Handle button press ──────────────────────────────────────────────────────
   const handleToggle = async () => {
     const nextOn = !effectivePumpOn;
@@ -198,7 +207,7 @@ export default function PumpSettingsScreen() {
     await sendPumpCommand(nextOn ? 1 : 0);
   };
 
-  const buttonDisabled = sendingCmd || safetyBlocked || (!config.isDemoMode && !pumpData && loading);
+  const buttonDisabled = sendingCmd || safetyBlocked || isConnecting;
 
   // ── Blocked reason string ────────────────────────────────────────────────────
   const blockedReason = overheadBlocked
@@ -331,37 +340,46 @@ export default function PumpSettingsScreen() {
 
       {/* ── Current Pump Status row ── */}
       <View style={styles.statusRow}>
-        {loading ? (
-          <ActivityIndicator size="small" color={(theme as any).tint} />
+        {isConnecting ? (
+          <>
+            <ActivityIndicator size="small" color={(theme as any).tint} />
+            <ThemedText type="smallBold" themeColor="textSecondary">
+              Connecting to server…
+            </ThemedText>
+          </>
         ) : (
+          <>
+            <View
+              style={[
+                styles.statusDot,
+                { backgroundColor: effectivePumpOn ? "#52c41a" : "#ff4d4f" },
+              ]}
+            />
+            <ThemedText type="smallBold">
+              Pump is {effectivePumpOn ? "ON" : "OFF"}
+            </ThemedText>
+          </>
+        )}
+        {!isConnecting && (
           <View
             style={[
-              styles.statusDot,
-              { backgroundColor: effectivePumpOn ? "#52c41a" : "#ff4d4f" },
+              styles.modeBadge,
+              {
+                backgroundColor:
+                  pumpMode === "manual"
+                    ? "rgba(250,173,20,0.18)"
+                    : "rgba(82,196,26,0.12)",
+              },
             ]}
-          />
-        )}
-        <ThemedText type="smallBold">
-          Pump is {effectivePumpOn ? "ON" : "OFF"}
-        </ThemedText>
-        <View
-          style={[
-            styles.modeBadge,
-            {
-              backgroundColor:
-                pumpMode === "manual"
-                  ? "rgba(250,173,20,0.18)"
-                  : "rgba(82,196,26,0.12)",
-            },
-          ]}
-        >
-          <ThemedText
-            type="small"
-            style={{ color: pumpMode === "manual" ? "#faad14" : "#52c41a" }}
           >
-            {pumpMode.toUpperCase()}
-          </ThemedText>
-        </View>
+            <ThemedText
+              type="small"
+              style={{ color: pumpMode === "manual" ? "#faad14" : "#52c41a" }}
+            >
+              {pumpMode.toUpperCase()}
+            </ThemedText>
+          </View>
+        )}
       </View>
 
       {/* ── Manual Control Button ── */}
