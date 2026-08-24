@@ -6,7 +6,8 @@ const connectDB = require("./src/config/db");
 connectDB();
 
 const PORT = process.env.PORT || 5000;
-const HOST = process.env.HOST || "127.0.0.1";
+// Cloud hosts (Render, Railway, Fly) require binding to 0.0.0.0
+const HOST = process.env.HOST || "0.0.0.0";
 
 const server = app.listen(PORT, HOST, () => {
   console.log(

@@ -15,7 +15,8 @@ const getDevApiUrl = () => {
       hostname.startsWith("10.");
 
     if (!isLocalhost) {
-      // In production deployment (e.g. Vercel), frontend and backend run on the same origin
+      // Production web: set EXPO_PUBLIC_API_URL (e.g. your Render backend URL)
+      // at build time; falls back to same-origin if the API is co-hosted.
       return window.location.origin;
     }
 

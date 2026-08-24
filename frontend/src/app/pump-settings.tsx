@@ -9,18 +9,11 @@ import { ThemedText } from "@/components/themed-text";
 import { useThingSpeak } from "@/hooks/use-thingspeak";
 import { Colors, Spacing } from "@/constants/theme";
 import { useColorScheme } from "@/hooks/use-color-scheme";
+import { API_URL as API_BASE } from "@/constants/api";
 
 // ─── Safety Thresholds ────────────────────────────────────────────────────────
 const OVERHEAD_MAX_PCT = 98; // pump must stop if overhead >= this
 const SOURCE_MIN_PCT = 5;    // pump must stop if source <= this
-
-// ─── Backend API base URL ─────────────────────────────────────────────────────
-// On web the Vercel rewrite forwards /api/* to the backend at the same origin.
-// On native (Expo Go / dev build) you need your LAN IP, e.g. "http://192.168.x.x:5000"
-const API_BASE =
-  typeof window !== "undefined" && window.location
-    ? ""           // web: same-origin
-    : "http://localhost:5000"; // native fallback
 
 // ─── usePumpControl hook ───────────────────────────────────────────────────────
 interface PumpStateData {
@@ -97,18 +90,27 @@ function usePumpControl() {
     };
   }, [tankId, fetchPumpState]);
 
-  // Init on mount
+  // Init on mount; retry every 5s until the backend is reachable
+  const tankIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    tankIdRef.current = tankId;
+  }, [tankId]);
+
   useEffect(() => {
     initTank();
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
+    const retry = setInterval(() => {
+      if (!tankIdRef.current) initTank();
+    }, 5000);
+    return () => clearInterval(retry);
   }, [initTank]);
 
   /** Send a manual pump command (0 = OFF, 1 = ON) */
   const sendPumpCommand = useCallback(
     async (state: 0 | 1): Promise<boolean> => {
-      if (!tankId) return false;
+      if (!tankId) {
+        setError("Not connected to the backend — pump command was not sent.");
+        return false;
+      }
       setSendingCmd(true);
       setError(null);
       try {
@@ -150,7 +152,7 @@ export default function PumpSettingsScreen() {
     stopSimulatedFlow,
   } = useThingSpeak();
 
-  const { pumpData, loading, sendingCmd, sendPumpCommand } =
+  const { pumpData, loading, sendingCmd, error, sendPumpCommand } =
     usePumpControl();
 
 
@@ -298,6 +300,20 @@ export default function PumpSettingsScreen() {
           </ThemedText>
         ) : null}
       </View>
+
+      {/* ── Backend connection error ── */}
+      {error ? (
+        <View
+          style={[
+            styles.bannerRow,
+            { backgroundColor: "rgba(255,77,79,0.12)", borderWidth: 1, borderColor: "#ff4d4f" },
+          ]}
+        >
+          <ThemedText type="small" style={{ color: "#ff4d4f", flexShrink: 1 }}>
+            ⚠ {error}
+          </ThemedText>
+        </View>
+      ) : null}
 
       {/* ── Current Pump Status row ── */}
       <View style={styles.statusRow}>

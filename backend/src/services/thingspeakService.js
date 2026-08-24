@@ -45,15 +45,28 @@ const sendPumpCommand = async (state) => {
       };
     }
 
-    const data = await response.json();
+    const raw = await response.text();
+    let data = null;
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      // fall through to the rejection branches below
+    }
 
     // entry_id of 0 means ThingSpeak accepted the request but discarded
     // the update (usually rate limiting).
-    if (!data || typeof data.entry_id !== 'number' || data.entry_id === 0) {
+    if (data && data.entry_id === 0) {
       return {
         forwarded: false,
         error:
-          'ThingSpeak rejected the update - most likely the free-tier 15s rate limit. Try again shortly.'
+          'ThingSpeak discarded the update - most likely the free-tier 15s rate limit. Try again shortly.'
+      };
+    }
+
+    if (!data || typeof data.entry_id !== 'number') {
+      return {
+        forwarded: false,
+        error: `Unexpected response from ThingSpeak (status ${response.status}): ${raw.slice(0, 140)}`
       };
     }
 
