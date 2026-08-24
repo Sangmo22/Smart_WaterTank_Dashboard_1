@@ -21,10 +21,14 @@ interface UseThingSpeakHistoryResult {
  * Fetches the last `results` ThingSpeak feed entries for the active config
  * and converts raw sensor values into 0-100 percentages using the same
  * calibration settings as the live dashboard.
+ *
+ * Pass `minutes` to restrict the feed to a recent time window
+ * (e.g. 1440 = last 24 hours).
  */
 export function useThingSpeakHistory(
   config: ThingSpeakConfig,
   results = 100,
+  minutes?: number,
 ): UseThingSpeakHistoryResult {
   const [history, setHistory] = useState<TankHistoryPoint[]>([]);
   const [loading, setLoading] = useState(false);
@@ -57,6 +61,9 @@ export function useThingSpeakHistory(
       let url = `https://api.thingspeak.com/channels/${channelId}/feeds.json?results=${results}`;
       if (readApiKey) {
         url += `&api_key=${readApiKey}`;
+      }
+      if (minutes !== undefined) {
+        url += `&minutes=${minutes}`;
       }
 
       const response = await fetch(url);
@@ -127,7 +134,7 @@ export function useThingSpeakHistory(
     } finally {
       setLoading(false);
     }
-  }, [config, results]);
+  }, [config, results, minutes]);
 
   useEffect(() => {
     // Defer the first fetch so we don't call setState synchronously inside

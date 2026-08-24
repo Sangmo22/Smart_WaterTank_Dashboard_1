@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useMemo,
+  useRef,
+  useCallback,
+} from "react";
 
 import { BottomTabInset, Spacing, Colors } from "@/constants/theme";
 import {
@@ -18,6 +24,7 @@ import { ThemedView } from "@/components/themed-view";
 import { WaterTank } from "@/components/water-tank";
 import { DashboardSettings } from "@/components/dashboard-settings";
 import { useThingSpeak } from "@/hooks/use-thingspeak";
+import { useThingSpeakHistory } from "@/hooks/use-thingspeak-history";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { usePushNotifications } from "@/hooks/use-push-notifications";
 import { alertsStore } from "@/state/alerts-store";
@@ -78,6 +85,9 @@ export default function HomeScreen() {
     startSimulatedFlow,
     stopSimulatedFlow,
   } = useThingSpeak();
+
+  // Seed the history chart with the last 24 hours of ThingSpeak data
+  const { history: seededHistory } = useThingSpeakHistory(config, 8000, 1440);
 
   // Helper to add events to list
   const addEvent = useCallback(
@@ -274,25 +284,72 @@ export default function HomeScreen() {
     const timestamp = data.lastUpdated.getTime();
     const timer = setTimeout(() => {
       setChartHistory((prev) => {
-        const last = prev[prev.length - 1];
-        if (last && last.time === timestamp) {
-          return prev;
-        }
-
+        // Merge through a Map keyed by timestamp so out-of-order or repeated
+        // poll responses can never create duplicate chart points.
         const cutoff = timestamp - 24 * 60 * 60 * 1000;
-        return [
-          ...prev.filter((point) => point.time >= cutoff),
-          {
+        const byTime = new Map<number, HistoryPoint>();
+        for (const point of prev) {
+          if (point.time >= cutoff) byTime.set(point.time, point);
+        }
+        const last = prev[prev.length - 1];
+        if (!last || last.time !== timestamp) {
+          byTime.set(timestamp, {
             time: timestamp,
             source: data.sourceLevel,
             overhead: data.overheadLevel,
-          },
-        ].slice(-48);
+          });
+        }
+        return [...byTime.values()]
+          .sort((a, b) => a.time - b.time)
+          .slice(-2000);
       });
     }, 0);
 
     return () => clearTimeout(timer);
   }, [isLoaded, data.lastUpdated, data.sourceLevel, data.overheadLevel]);
+
+  // Merge fetched ThingSpeak history into the chart (live points win on
+  // identical timestamps). Runs when the seed arrives or the config changes.
+  useEffect(() => {
+    if (!isLoaded || seededHistory.length === 0) return;
+
+    const timer = setTimeout(() => {
+      setChartHistory((prev) => {
+        const byTime = new Map<number, HistoryPoint>();
+        for (const point of prev) {
+          byTime.set(point.time, point);
+        }
+        for (const point of seededHistory) {
+          byTime.set(point.time, {
+            time: point.time,
+            source: point.source,
+            overhead: point.overhead,
+          });
+        }
+        const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+        return [...byTime.values()]
+          .filter((point) => point.time >= cutoff)
+          .sort((a, b) => a.time - b.time)
+          .slice(-2000);
+      });
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [isLoaded, seededHistory]);
+
+  // Downsample to ~24 evenly spaced points so one day of data fits the chart
+  const displayPoints = useMemo<HistoryPoint[]>(() => {
+    const maxPoints = 24;
+    if (chartHistory.length <= maxPoints) return chartHistory;
+    const out: HistoryPoint[] = [];
+    for (let i = 0; i < maxPoints; i++) {
+      const index = Math.round(
+        (i * (chartHistory.length - 1)) / (maxPoints - 1),
+      );
+      out.push(chartHistory[index]);
+    }
+    return out;
+  }, [chartHistory]);
 
   // Handle configuration saving
   const handleSaveConfig = async (newConfig: any) => {
@@ -909,7 +966,7 @@ export default function HomeScreen() {
                       {/* SVG lines connecting the dots - web only */}
                       {Platform.OS === "web" &&
                         (() => {
-                          const pts = chartHistory.slice(-24);
+                          const pts = displayPoints;
                           if (pts.length < 2) return null;
                           const pL = 48,
                             pR = 18,
@@ -965,7 +1022,7 @@ export default function HomeScreen() {
                           );
                         })()}
 
-                      {chartHistory.slice(-24).map((point, index, points) => {
+                      {displayPoints.map((point, index, points) => {
                         const paddingLeft = 48;
                         const paddingRight = 18;
                         const paddingTop = 18;
@@ -989,7 +1046,7 @@ export default function HomeScreen() {
                           index % 4 === 0;
 
                         return (
-                          <React.Fragment key={point.time}>
+                          <React.Fragment key={`${point.time}-${index}`}>
                             {/* Source dot */}
                             <View
                               style={[
