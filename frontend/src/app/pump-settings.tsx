@@ -15,6 +15,20 @@ import { API_URL as API_BASE } from "@/constants/api";
 const OVERHEAD_MAX_PCT = 98; // pump must stop if overhead >= this
 const SOURCE_MIN_PCT = 5;    // pump must stop if source <= this
 
+/**
+ * Parse a fetch response as JSON, guarding against non-JSON payloads
+ * (e.g. an HTML page) that would otherwise throw "Unexpected token '<'".
+ */
+async function readJson(res: Response): Promise<any> {
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!contentType.includes("json")) {
+    throw new Error(
+      `Expected JSON from ${API_BASE} but received ${contentType.split(";")[0] || `status ${res.status}`} — is the backend running and EXPO_PUBLIC_API_URL correct?`,
+    );
+  }
+  return res.json();
+}
+
 // ─── usePumpControl hook ───────────────────────────────────────────────────────
 interface PumpStateData {
   pumpState: 0 | 1;
@@ -38,7 +52,7 @@ function usePumpControl() {
       // Try to load existing tanks
       let res = await fetch(`${API_BASE}/api/tanks`);
       if (!res.ok) throw new Error(`Failed to load tanks (${res.status})`);
-      const json = await res.json();
+      const json = await readJson(res);
 
       let id: string | null = null;
 
@@ -56,7 +70,7 @@ function usePumpControl() {
           }),
         });
         if (!res.ok) throw new Error(`Failed to create tank (${res.status})`);
-        const created = await res.json();
+        const created = await readJson(res);
         id = created.data._id as string;
       }
 
@@ -73,7 +87,7 @@ function usePumpControl() {
     try {
       const res = await fetch(`${API_BASE}/api/tanks/${id}/pump`);
       if (!res.ok) return;
-      const json = await res.json();
+      const json = await readJson(res);
       setPumpData(json.data as PumpStateData);
     } catch {
       // Silently ignore transient poll errors
@@ -123,7 +137,7 @@ function usePumpControl() {
           const errJson = await res.json().catch(() => ({}));
           throw new Error(errJson?.error ?? `Request failed (${res.status})`);
         }
-        const json = await res.json();
+        const json = await readJson(res);
         setPumpData(json.data as PumpStateData);
         return true;
       } catch (err: any) {
