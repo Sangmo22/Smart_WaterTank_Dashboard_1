@@ -75,12 +75,16 @@ const setPumpState = async (req, res, next) => {
       tank.pumpState = newState;
       await tank.save();
 
-      // Forward manual ON/OFF commands to the physical pump via ThingSpeak.
-      if (newMode === 'manual') {
-        thingspeakResult = await sendPumpCommand(newState);
-        if (!thingspeakResult.forwarded) {
-          console.error(`[THINGSPEAK] Pump command (${newState}) not delivered: ${thingspeakResult.error}`);
-        }
+      // Forward the command to the physical pump via ThingSpeak.
+      // Protocol understood by the ESP32 firmware (field THINGSPEAK_PUMP_FIELD):
+      //   1 = MANUAL ON, anything else (0) = back to AUTOMATIC mode.
+      // Note: there is no "forced OFF" command in the firmware - turning the
+      // mode to AUTO lets the on-device thresholds decide when to stop.
+      const commandValue = newMode === 'auto' ? 0 : newState;
+
+      thingspeakResult = await sendPumpCommand(commandValue);
+      if (!thingspeakResult.forwarded) {
+        console.error(`[THINGSPEAK] Pump command (${commandValue}) not delivered: ${thingspeakResult.error}`);
       }
     }
 

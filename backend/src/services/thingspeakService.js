@@ -7,7 +7,7 @@ const REQUEST_TIMEOUT_MS = 10000;
 
 /**
  * Forward a pump command to the physical device via a ThingSpeak channel field.
- * @param {0|1} state Pump command: 1 = ON, 0 = OFF
+ * @param {0|1|2} state Command protocol: 0 = AUTO, 1 = MANUAL ON, 2 = MANUAL OFF
  * @returns {Promise<{forwarded: boolean, entryId?: number, error?: string}>}
  */
 const sendPumpCommand = async (state) => {
