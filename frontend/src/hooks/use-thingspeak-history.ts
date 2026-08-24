@@ -82,16 +82,17 @@ export function useThingSpeakHistory(
         .map((feed: any) => {
           const sourceRawValStr = feed[`field${sourceField}`];
           const overheadRawValStr = feed[`field${overheadField}`];
-          if (
-            sourceRawValStr === undefined &&
-            overheadRawValStr === undefined
-          ) {
+          // Skip command-only rows (dashboard pump buttons write just the
+          // command field, leaving sensor fields null) and non-numeric
+          // readings - otherwise they would plot as false 0% points.
+          if (sourceRawValStr == null || overheadRawValStr == null) {
             return null;
           }
-          const sourceRaw =
-            sourceRawValStr !== null ? parseFloat(sourceRawValStr) : 0;
-          const overheadRaw =
-            overheadRawValStr !== null ? parseFloat(overheadRawValStr) : 0;
+          const sourceRaw = parseFloat(sourceRawValStr);
+          const overheadRaw = parseFloat(overheadRawValStr);
+          if (!Number.isFinite(sourceRaw) || !Number.isFinite(overheadRaw)) {
+            return null;
+          }
           return {
             time: feed.created_at
               ? new Date(feed.created_at).getTime()
