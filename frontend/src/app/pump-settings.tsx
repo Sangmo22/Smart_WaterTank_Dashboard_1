@@ -370,8 +370,8 @@ export default function PumpSettingsScreen() {
             : safetyBlocked
               ? "Pump Blocked"
               : effectivePumpOn
-                ? "Turn Pump OFF  (→ 0)"
-                : "Turn Pump ON  (→ 1)"}
+                ? "Turn Pump OFF"
+                : "Turn Pump ON"}
         </ThemedText>
       </Pressable>
 

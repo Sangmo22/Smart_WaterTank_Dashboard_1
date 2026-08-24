@@ -42,18 +42,19 @@ export const DEFAULT_CONFIG: ThingSpeakConfig = {
   sourceMaxRaw: 100,
   sourceInvert: false,
 
-  // Overhead Tank → Field 1 (distance sensor: lower value = more water, higher = empty)
-  // Observed range: ~10 (full) to ~66 (empty)
+  // Overhead Tank → Field 1
+  // Arduino already converts distance readings to percentage before publishing,
+  // so both fields are pass-through (raw value = fill %).
   overheadField: 1,
-  overheadMinRaw: 5,
-  overheadMaxRaw: 70,
-  overheadInvert: true,
+  overheadMinRaw: 0,
+  overheadMaxRaw: 100,
+  overheadInvert: false,
 };
 
 const STORAGE_KEY = "water_tank_dashboard_config";
 // Bump this version whenever field assignments or raw ranges change
 // so cached configs automatically pick up the new sensor defaults.
-const CONFIG_VERSION = 3;
+const CONFIG_VERSION = 4;
 const CONFIG_VERSION_KEY = "water_tank_dashboard_config_version";
 
 // Helper to scale values to percentage (0 - 100)
@@ -208,7 +209,9 @@ export function useThingSpeak() {
           overheadMaxRaw,
           overheadInvert,
         } = currentConfig;
-        let url = `https://api.thingspeak.com/channels/${channelId}/feeds.json?results=1`;
+        // Fetch several entries: pump-command writes create rows where the
+        // sensor fields are null, so the newest row alone can be incomplete.
+        let url = `https://api.thingspeak.com/channels/${channelId}/feeds.json?results=10`;
         if (readApiKey) {
           url += `&api_key=${readApiKey}`;
         }
@@ -225,22 +228,44 @@ export function useThingSpeak() {
           throw new Error("No feed data found for this channel.");
         }
 
-        const feed = resData.feeds[0];
+        const feeds: Record<string, any>[] = resData.feeds;
         const channelInfo = resData.channel || {};
 
-        const sourceRawValStr = feed[`field${sourceField}`];
-        const overheadRawValStr = feed[`field${overheadField}`];
+        // Newest entry that actually contains a value for the given field
+        // (skips command-only rows where sensor fields are null).
+        const latestForField = (
+          fieldNum: number,
+        ): { value: number; createdAt: string | null } | null => {
+          for (const entry of feeds) {
+            const raw = entry[`field${fieldNum}`];
+            if (raw !== null && raw !== undefined && raw !== "") {
+              return { value: parseFloat(raw), createdAt: entry.created_at ?? null };
+            }
+          }
+          return null;
+        };
 
-        if (sourceRawValStr === undefined && overheadRawValStr === undefined) {
+        const sourceReading = latestForField(sourceField);
+        const overheadReading = latestForField(overheadField);
+
+        if (!sourceReading && !overheadReading) {
           throw new Error(
-            `Fields ${sourceField} and ${overheadField} are not in the response feed.`,
+            `Fields ${sourceField} and ${overheadField} have no data in the recent feed.`,
           );
         }
 
-        const sourceRaw =
-          sourceRawValStr !== null ? parseFloat(sourceRawValStr) : 0;
-        const overheadRaw =
-          overheadRawValStr !== null ? parseFloat(overheadRawValStr) : 0;
+        const sourceRaw = sourceReading?.value ?? 0;
+        const overheadRaw = overheadReading?.value ?? 0;
+
+        // Timestamp of the newest sensor reading (not of command-only rows).
+        const readingTimestamps = [
+          sourceReading?.createdAt,
+          overheadReading?.createdAt,
+        ].filter((t): t is string => t !== null);
+        const lastUpdatedStr =
+          readingTimestamps.length > 0
+            ? readingTimestamps.sort().reverse()[0]
+            : feeds[0].created_at;
 
         const sourceLevel = scaleValue(
           sourceRaw,
@@ -260,7 +285,7 @@ export function useThingSpeak() {
           sourceRaw,
           overheadLevel,
           overheadRaw,
-          lastUpdated: feed.created_at ? new Date(feed.created_at) : new Date(),
+          lastUpdated: lastUpdatedStr ? new Date(lastUpdatedStr) : new Date(),
           channelName: channelInfo.name || `Channel ${channelId}`,
         });
       } catch (err: any) {

@@ -2,6 +2,7 @@ const { z } = require('zod');
 const Tank = require('../models/Tank');
 const PumpLog = require('../models/PumpLog');
 const ErrorResponse = require('../utils/errorResponse');
+const { sendPumpCommand } = require('../services/thingspeakService');
 
 // Validation Schemas
 const setPumpStateSchema = z.object({
@@ -60,6 +61,8 @@ const setPumpState = async (req, res, next) => {
     }
 
     // Log the change and update DB only if state or mode transitioned
+    let thingspeakResult = null;
+
     if (oldMode !== newMode || oldState !== newState) {
       await PumpLog.create({
         tankId: tank._id,
@@ -71,14 +74,26 @@ const setPumpState = async (req, res, next) => {
       tank.pumpMode = newMode;
       tank.pumpState = newState;
       await tank.save();
+
+      // Forward manual ON/OFF commands to the physical pump via ThingSpeak.
+      if (newMode === 'manual') {
+        thingspeakResult = await sendPumpCommand(newState);
+        if (!thingspeakResult.forwarded) {
+          console.error(`[THINGSPEAK] Pump command (${newState}) not delivered: ${thingspeakResult.error}`);
+        }
+      }
     }
 
     res.json({
       success: true,
-      message: 'Pump state configuration successfully updated',
+      message:
+        thingspeakResult && !thingspeakResult.forwarded
+          ? `Pump state saved, but it could not be sent to the device: ${thingspeakResult.error}`
+          : 'Pump state configuration successfully updated',
       data: {
         pumpState: tank.pumpState,
-        pumpMode: tank.pumpMode
+        pumpMode: tank.pumpMode,
+        thingspeak: thingspeakResult
       }
     });
   } catch (err) {
