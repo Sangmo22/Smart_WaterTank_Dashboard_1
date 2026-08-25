@@ -108,7 +108,7 @@ async function fetchSourceLevel(config) {
   const url = new URL(
     `https://api.thingspeak.com/channels/${config.channelId}/feeds.json`,
   );
-  url.searchParams.set("results", "1");
+  url.searchParams.set("results", "25");
   if (config.readApiKey) {
     url.searchParams.set("api_key", config.readApiKey);
   }
@@ -119,12 +119,36 @@ async function fetchSourceLevel(config) {
   }
 
   const payload = await response.json();
-  const feed = payload.feeds?.[0];
-  if (!feed) {
+  const feeds = payload.feeds;
+  if (!feeds || feeds.length === 0) {
     throw new Error("ThingSpeak returned no feed data.");
   }
 
-  const raw = Number(feed[`field${config.sourceField}`] ?? 0);
+  // Find the newest entry with a non-null source field. Pump-command rows
+  // write only field3 (pump on/off) and leave sensor fields null.
+  const sourceField = `field${config.sourceField}`;
+  const MAX_DELTA = 10; // percentage points — skip glitched readings
+  const complete = feeds.filter(
+    (f) => f[sourceField] !== null && f[sourceField] !== undefined && f[sourceField] !== "",
+  );
+
+  if (complete.length === 0) {
+    throw new Error(`No non-null source readings in the last ${feeds.length} entries.`);
+  }
+
+  let feed = complete[complete.length - 1];
+
+  // If the newest reading jumped by more than MAX_DELTA from the previous
+  // one, it's likely a sensor glitch — fall back to the previous entry.
+  if (complete.length >= 2) {
+    const lastRaw = Number(feed[sourceField]);
+    const prevRaw = Number(complete[complete.length - 2][sourceField]);
+    if (Math.abs(lastRaw - prevRaw) > MAX_DELTA) {
+      feed = complete[complete.length - 2];
+    }
+  }
+
+  const raw = Number(feed[sourceField] ?? 0);
   const level = scaleValue(
     raw,
     config.sourceMinRaw,
