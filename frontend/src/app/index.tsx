@@ -27,6 +27,7 @@ import { useThingSpeak } from "@/hooks/use-thingspeak";
 import { useThingSpeakHistory } from "@/hooks/use-thingspeak-history";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { usePushNotifications } from "@/hooks/use-push-notifications";
+import * as Notifications from "expo-notifications";
 import { alertsStore } from "@/state/alerts-store";
 
 
@@ -254,8 +255,21 @@ export default function HomeScreen() {
     if (sourceLowNotificationShown.current) return;
     sourceLowNotificationShown.current = true;
 
-    if (Platform.OS !== "web") return;
+    // Native: schedule a local notification via expo-notifications
+    if (Platform.OS !== "web") {
+      Notifications.scheduleNotificationAsync({
+        content: {
+          title: "Source tank critically low",
+          body: `Source tank is at ${data.sourceLevel}%. Refill before the pump runs dry.`,
+          data: { type: "source-low", sourceLevel: data.sourceLevel },
+          sound: true,
+        },
+        trigger: null, // show immediately
+      }).catch(() => {});
+      return;
+    }
 
+    // Web: use the browser Notification API
     const BrowserNotification = (globalThis as any).Notification;
     if (!BrowserNotification) return;
 
