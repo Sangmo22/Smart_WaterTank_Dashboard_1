@@ -245,6 +245,8 @@ export function useThingSpeak() {
         // field1/field2 null. Using a single row ensures source and overhead
         // are from the exact same timestamp — avoids the mismatch where each
         // field independently picks a different (stale) row.
+        // Feeds are ordered oldest-first; iterate all to find the NEWEST
+        // row where both sensor fields are present.
         let matchedEntry: Record<string, any> | null = null;
         for (const entry of feeds) {
           const srcRaw = entry[`field${sourceField}`];
@@ -253,22 +255,23 @@ export function useThingSpeak() {
           const ovhOk = ovhRaw !== null && ovhRaw !== undefined && ovhRaw !== "";
           if (srcOk && ovhOk) {
             matchedEntry = entry;
-            break;
           }
         }
 
         if (!matchedEntry) {
-          // Fallback: try each field independently if no complete row exists
+          // Fallback: try each field independently if no complete row exists.
+          // Feeds are oldest-first, so take the last non-null per field.
           const latestForField = (
             fieldNum: number,
           ): { value: number; createdAt: string | null } | null => {
+            let result: { value: number; createdAt: string | null } | null = null;
             for (const entry of feeds) {
               const raw = entry[`field${fieldNum}`];
               if (raw !== null && raw !== undefined && raw !== "") {
-                return { value: parseFloat(raw), createdAt: entry.created_at ?? null };
+                result = { value: parseFloat(raw), createdAt: entry.created_at ?? null };
               }
             }
-            return null;
+            return result;
           };
           const sourceReading = latestForField(sourceField);
           const overheadReading = latestForField(overheadField);
