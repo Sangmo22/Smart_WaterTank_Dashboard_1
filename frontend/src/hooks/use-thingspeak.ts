@@ -34,7 +34,7 @@ export const DEFAULT_CONFIG: ThingSpeakConfig = {
   channelId: "3420273",
   readApiKey: "WZV2KJC22K3ZDNGM",
   isDemoMode: false,
-  pollingIntervalMs: 15000,
+  pollingIntervalMs: 20000,
 
   // Source Tank → Field 2
   sourceField: 2,
@@ -54,7 +54,7 @@ export const DEFAULT_CONFIG: ThingSpeakConfig = {
 const STORAGE_KEY = "water_tank_dashboard_config";
 // Bump this version whenever field assignments or raw ranges change
 // so cached configs automatically pick up the new sensor defaults.
-const CONFIG_VERSION = 4;
+const CONFIG_VERSION = 6;
 const CONFIG_VERSION_KEY = "water_tank_dashboard_config_version";
 
 // Helper to scale values to percentage (0 - 100)
@@ -119,23 +119,32 @@ export function useThingSpeak() {
             savedVersion = vStr ? parseInt(vStr, 10) : 0;
           } catch {}
 
-          let merged = loaded;
+          // Always enforce correct field mappings — these are defined by the
+          // Arduino firmware (field1=overhead, field2=source) and must never
+          // be overridden by stale localStorage values.
+          let merged: ThingSpeakConfig = {
+            ...loaded,
+            sourceField: DEFAULT_CONFIG.sourceField,
+            overheadField: DEFAULT_CONFIG.overheadField,
+          };
+
           if (savedVersion < CONFIG_VERSION) {
-            // Preserve user-set channelId, readApiKey, isDemoMode, pollingIntervalMs
-            // but reset all sensor field/range values to the latest defaults
+            // On version bumps, also reset raw ranges and invert flags to
+            // the latest sane defaults.
             merged = {
-              ...loaded,
-              sourceField: DEFAULT_CONFIG.sourceField,
+              ...merged,
               sourceMinRaw: DEFAULT_CONFIG.sourceMinRaw,
               sourceMaxRaw: DEFAULT_CONFIG.sourceMaxRaw,
               sourceInvert: DEFAULT_CONFIG.sourceInvert,
-              overheadField: DEFAULT_CONFIG.overheadField,
               overheadMinRaw: DEFAULT_CONFIG.overheadMinRaw,
               overheadMaxRaw: DEFAULT_CONFIG.overheadMaxRaw,
               overheadInvert: DEFAULT_CONFIG.overheadInvert,
             };
-            // Save merged config and updated version
-            const jsonStr = JSON.stringify(merged);
+          }
+
+          // Persist if anything changed
+          const jsonStr = JSON.stringify(merged);
+          if (jsonStr !== savedConfigStr) {
             if (Platform.OS === "web") {
               localStorage.setItem(STORAGE_KEY, jsonStr);
               localStorage.setItem(CONFIG_VERSION_KEY, String(CONFIG_VERSION));
@@ -211,7 +220,7 @@ export function useThingSpeak() {
         } = currentConfig;
         // Fetch several entries: pump-command writes create rows where the
         // sensor fields are null, so the newest row alone can be incomplete.
-        let url = `https://api.thingspeak.com/channels/${channelId}/feeds.json?results=10`;
+        let url = `https://api.thingspeak.com/channels/${channelId}/feeds.json?results=25`;
         if (readApiKey) {
           url += `&api_key=${readApiKey}`;
         }
@@ -231,41 +240,81 @@ export function useThingSpeak() {
         const feeds: Record<string, any>[] = resData.feeds;
         const channelInfo = resData.channel || {};
 
-        // Newest entry that actually contains a value for the given field
-        // (skips command-only rows where sensor fields are null).
-        const latestForField = (
-          fieldNum: number,
-        ): { value: number; createdAt: string | null } | null => {
-          for (const entry of feeds) {
-            const raw = entry[`field${fieldNum}`];
-            if (raw !== null && raw !== undefined && raw !== "") {
-              return { value: parseFloat(raw), createdAt: entry.created_at ?? null };
-            }
+        // Find the NEWEST feed row where BOTH sensor fields are present.
+        // Pump-command rows only write field3 (pump on/off) and leave
+        // field1/field2 null. Using a single row ensures source and overhead
+        // are from the exact same timestamp — avoids the mismatch where each
+        // field independently picks a different (stale) row.
+        let matchedEntry: Record<string, any> | null = null;
+        for (const entry of feeds) {
+          const srcRaw = entry[`field${sourceField}`];
+          const ovhRaw = entry[`field${overheadField}`];
+          const srcOk = srcRaw !== null && srcRaw !== undefined && srcRaw !== "";
+          const ovhOk = ovhRaw !== null && ovhRaw !== undefined && ovhRaw !== "";
+          if (srcOk && ovhOk) {
+            matchedEntry = entry;
+            break;
           }
-          return null;
-        };
-
-        const sourceReading = latestForField(sourceField);
-        const overheadReading = latestForField(overheadField);
-
-        if (!sourceReading && !overheadReading) {
-          throw new Error(
-            `Fields ${sourceField} and ${overheadField} have no data in the recent feed.`,
-          );
         }
 
-        const sourceRaw = sourceReading?.value ?? 0;
-        const overheadRaw = overheadReading?.value ?? 0;
+        if (!matchedEntry) {
+          // Fallback: try each field independently if no complete row exists
+          const latestForField = (
+            fieldNum: number,
+          ): { value: number; createdAt: string | null } | null => {
+            for (const entry of feeds) {
+              const raw = entry[`field${fieldNum}`];
+              if (raw !== null && raw !== undefined && raw !== "") {
+                return { value: parseFloat(raw), createdAt: entry.created_at ?? null };
+              }
+            }
+            return null;
+          };
+          const sourceReading = latestForField(sourceField);
+          const overheadReading = latestForField(overheadField);
+          if (!sourceReading && !overheadReading) {
+            throw new Error(
+              `Fields ${sourceField} and ${overheadField} have no data in the recent feed.`,
+            );
+          }
+          const sourceRaw = sourceReading?.value ?? 0;
+          const overheadRaw = overheadReading?.value ?? 0;
+          const readingTimestamps = [
+            sourceReading?.createdAt,
+            overheadReading?.createdAt,
+          ].filter((t): t is string => t !== null);
+          const lastUpdatedStr =
+            readingTimestamps.length > 0
+              ? readingTimestamps.sort().reverse()[0]
+              : feeds[0].created_at;
 
-        // Timestamp of the newest sensor reading (not of command-only rows).
-        const readingTimestamps = [
-          sourceReading?.createdAt,
-          overheadReading?.createdAt,
-        ].filter((t): t is string => t !== null);
-        const lastUpdatedStr =
-          readingTimestamps.length > 0
-            ? readingTimestamps.sort().reverse()[0]
-            : feeds[0].created_at;
+          const sourceLevel = scaleValue(
+            sourceRaw,
+            sourceMinRaw,
+            sourceMaxRaw,
+            sourceInvert,
+          );
+          const overheadLevel = scaleValue(
+            overheadRaw,
+            overheadMinRaw,
+            overheadMaxRaw,
+            overheadInvert,
+          );
+
+          setData({
+            sourceLevel,
+            sourceRaw,
+            overheadLevel,
+            overheadRaw,
+            lastUpdated: lastUpdatedStr ? new Date(lastUpdatedStr) : new Date(),
+            channelName: channelInfo.name || `Channel ${channelId}`,
+          });
+          return;
+        }
+
+        const sourceRaw = parseFloat(matchedEntry[`field${sourceField}`]);
+        const overheadRaw = parseFloat(matchedEntry[`field${overheadField}`]);
+        const lastUpdatedStr = matchedEntry.created_at;
 
         const sourceLevel = scaleValue(
           sourceRaw,

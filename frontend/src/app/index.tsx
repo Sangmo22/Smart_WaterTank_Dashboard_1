@@ -337,19 +337,40 @@ export default function HomeScreen() {
     return () => clearTimeout(timer);
   }, [isLoaded, seededHistory]);
 
-  // Downsample to ~24 evenly spaced points so one day of data fits the chart
+  // Downsample to ~24 evenly spaced points so one day of data fits the chart.
+  // The rightmost point is always overridden with the current live values so
+  // the chart's latest reading matches the tank display (the history seed and
+  // live poll can disagree because the live hook picks the latest non-null
+  // value per field independently while history rows require both fields).
   const displayPoints = useMemo<HistoryPoint[]>(() => {
     const maxPoints = 24;
-    if (chartHistory.length <= maxPoints) return chartHistory;
-    const out: HistoryPoint[] = [];
-    for (let i = 0; i < maxPoints; i++) {
-      const index = Math.round(
-        (i * (chartHistory.length - 1)) / (maxPoints - 1),
-      );
-      out.push(chartHistory[index]);
+    let points = chartHistory;
+    if (points.length > maxPoints) {
+      const out: HistoryPoint[] = [];
+      for (let i = 0; i < maxPoints; i++) {
+        const index = Math.round(
+          (i * (points.length - 1)) / (maxPoints - 1),
+        );
+        out.push(points[index]);
+      }
+      points = out;
     }
-    return out;
-  }, [chartHistory]);
+    if (points.length > 0 && data.lastUpdated) {
+      const last = points[points.length - 1];
+      if (
+        last.source !== data.sourceLevel ||
+        last.overhead !== data.overheadLevel
+      ) {
+        points = points.slice(0, -1);
+        points.push({
+          time: last.time,
+          source: data.sourceLevel,
+          overhead: data.overheadLevel,
+        });
+      }
+    }
+    return points;
+  }, [chartHistory, data.sourceLevel, data.overheadLevel, data.lastUpdated]);
 
   // Handle configuration saving
   const handleSaveConfig = async (newConfig: any) => {
@@ -1211,7 +1232,7 @@ export default function HomeScreen() {
                         { backgroundColor: "#3b82f6" },
                       ]}
                     />
-                    <ThemedText type="smallBold">Tank 1</ThemedText>
+                    <ThemedText type="smallBold">Source Tank</ThemedText>
                   </View>
                   <View style={styles.legendItem}>
                     <View
@@ -1220,7 +1241,7 @@ export default function HomeScreen() {
                         { backgroundColor: "#14b8a6" },
                       ]}
                     />
-                    <ThemedText type="smallBold">Tank 2</ThemedText>
+                    <ThemedText type="smallBold">Overhead Tank</ThemedText>
                   </View>
                 </View>
               </View>

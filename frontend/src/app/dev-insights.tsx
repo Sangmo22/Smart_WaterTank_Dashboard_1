@@ -3,6 +3,7 @@ import { ThemedText } from "@/components/themed-text";
 import { Colors, Spacing } from "@/constants/theme";
 import { useThingSpeak } from "@/hooks/use-thingspeak";
 import { useThingSpeakHistory } from "@/hooks/use-thingspeak-history";
+import { useColorScheme } from "@/hooks/use-color-scheme";
 import { useMemo, useState } from "react";
 import { Platform, Pressable, StyleSheet, View } from "react-native";
 
@@ -16,29 +17,31 @@ function msToHuman(ms: number) {
 
 function computeInsights(
   history: { time: number; source: number; overhead: number }[] | null,
+  liveSource: number,
+  liveOverhead: number,
+  liveTimestamp: number,
 ) {
   if (!history || history.length < 2) return null;
   const oldest = history[0];
-  const newest = history[history.length - 1];
-  const spanMs = Math.max(1, newest.time - oldest.time);
+  const spanMs = Math.max(1, liveTimestamp - oldest.time);
   const spanHours = spanMs / (60 * 60 * 1000);
   const tooShort =
     spanMs < 2 * 60 * 1000 ||
-    (newest.overhead === oldest.overhead && newest.source === oldest.source);
+    (liveOverhead === oldest.overhead && liveSource === oldest.source);
 
-  const overheadDrop = oldest.overhead - newest.overhead;
+  const overheadDrop = oldest.overhead - liveOverhead;
   const consumptionRate = tooShort ? 0 : overheadDrop / spanHours;
 
   const timeToEmptyMs =
     !tooShort && consumptionRate > 0
-      ? (newest.overhead / consumptionRate) * (60 * 60 * 1000)
+      ? (liveOverhead / consumptionRate) * (60 * 60 * 1000)
       : Infinity;
 
-  const sourceDrop = oldest.source - newest.source;
+  const sourceDrop = oldest.source - liveSource;
   const sourceDrainRate = tooShort ? 0 : sourceDrop / spanHours;
   const timeToDryMs =
     !tooShort && sourceDrainRate > 0
-      ? (newest.source / sourceDrainRate) * (60 * 60 * 1000)
+      ? (liveSource / sourceDrainRate) * (60 * 60 * 1000)
       : Infinity;
 
   return {
@@ -48,7 +51,7 @@ function computeInsights(
     timeToEmptyMs,
     sourceDrainRatePerHour: sourceDrainRate,
     timeToDryMs,
-    newest: newest.time,
+    newest: liveTimestamp,
     oldest: oldest.time,
   };
 }
@@ -81,19 +84,34 @@ function predictHeuristic(
 }
 
 export default function DevInsights() {
-  const { config } = useThingSpeak();
+  const { data, config } = useThingSpeak();
   const { history, loading, error, refresh, isDemoMode } = useThingSpeakHistory(
     config,
     1000,
+    1440,
   );
   const [weather] = useState({ temp: 30, humidity: 50, rainProbability: 0.2 });
 
-  const insights = useMemo(() => computeInsights(history as any), [history]);
+  const insights = useMemo(
+    () =>
+      computeInsights(
+        history as any,
+        data.sourceLevel,
+        data.overheadLevel,
+        data.lastUpdated?.getTime() ?? Date.now(),
+      ),
+    [history, data.sourceLevel, data.overheadLevel, data.lastUpdated],
+  );
 
   const predictedUsage = useMemo(() => {
     if (!history || history.length === 0) return null;
-    return predictHeuristic((history as any).slice(-8), weather);
-  }, [history, weather]);
+    const recent = (history as any).slice(-8);
+    if (recent.length === 0) return null;
+    return predictHeuristic(
+      [...recent, { overhead: data.overheadLevel }],
+      weather,
+    );
+  }, [history, data.overheadLevel, weather]);
 
   const exportCsv = (hist: any[]) => {
     if (!hist || hist.length === 0) return;
@@ -121,7 +139,7 @@ export default function DevInsights() {
     }
 
     const csv = rows
-      .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(","))
+      .map((r: unknown[]) => r.map((c: unknown) => `"${String(c).replace(/"/g, '""')}"`).join(","))
       .join("\n");
 
     if (
@@ -148,7 +166,7 @@ export default function DevInsights() {
     }
   };
 
-  const scheme = "light";
+  const scheme = useColorScheme();
   const theme = Colors[scheme === "dark" ? "dark" : "light"];
 
   return (

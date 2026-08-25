@@ -33,13 +33,117 @@ function formatHours(ms: number): string {
   return `~${Math.round(hours / 24)} day${hours >= 48 ? "s" : ""}`;
 }
 
+// --- Z-Score statistical helpers ---
+
+interface ZResult {
+  mean: number;
+  stddev: number;
+  filteredMean: number;
+  filteredStddev: number;
+  outliers: number;
+  total: number;
+  samples: number[];
+  confidence95Low: number;
+  confidence95High: number;
+}
+
+/** Compute mean of an array */
+function mean(arr: number[]): number {
+  if (arr.length === 0) return 0;
+  return arr.reduce((s, v) => s + v, 0) / arr.length;
+}
+
+/** Compute sample standard deviation */
+function stddev(arr: number[], arrMean?: number): number {
+  if (arr.length < 2) return 0;
+  const m = arrMean ?? mean(arr);
+  const variance = arr.reduce((s, v) => s + (v - m) ** 2, 0) / (arr.length - 1);
+  return Math.sqrt(variance);
+}
+
+/**
+ * Compute per-interval rates (%/hr) from consecutive readings,
+ * then filter outliers using z-score. Returns the robust rate
+ * estimate with 95% confidence interval.
+ */
+function zScoreRates(
+  readings: { time: number; level: number }[],
+  zThreshold = 2,
+): ZResult {
+  if (readings.length < 2) {
+    return {
+      mean: 0,
+      stddev: 0,
+      filteredMean: 0,
+      filteredStddev: 0,
+      outliers: 0,
+      total: 0,
+      samples: [],
+      confidence95Low: 0,
+      confidence95High: 0,
+    };
+  }
+
+  // Compute per-interval rates (%/hr)
+  const rates: number[] = [];
+  for (let i = 1; i < readings.length; i++) {
+    const dt = (readings[i].time - readings[i - 1].time) / (60 * 60 * 1000);
+    if (dt <= 0) continue;
+    const dLevel = readings[i].level - readings[i - 1].level;
+    rates.push(dLevel / dt);
+  }
+
+  if (rates.length === 0) {
+    return {
+      mean: 0,
+      stddev: 0,
+      filteredMean: 0,
+      filteredStddev: 0,
+      outliers: 0,
+      total: 0,
+      samples: [],
+      confidence95Low: 0,
+      confidence95High: 0,
+    };
+  }
+
+  const m = mean(rates);
+  const s = stddev(rates, m);
+
+  // Filter outliers: remove readings where |z| > threshold
+  const filtered = s > 0
+    ? rates.filter((r) => Math.abs((r - m) / s) <= zThreshold)
+    : [...rates];
+
+  const fm = filtered.length > 0 ? mean(filtered) : m;
+  const fs = stddev(filtered, fm);
+
+  // 95% confidence interval: mean ± 1.96 * (stddev / sqrt(n))
+  const se = fs / Math.sqrt(Math.max(1, filtered.length));
+  const ci95Low = fm - 1.96 * se;
+  const ci95High = fm + 1.96 * se;
+
+  return {
+    mean: m,
+    stddev: s,
+    filteredMean: fm,
+    filteredStddev: fs,
+    outliers: rates.length - filtered.length,
+    total: rates.length,
+    samples: filtered,
+    confidence95Low: ci95Low,
+    confidence95High: ci95High,
+  };
+}
+
 export default function AnalyticsScreen() {
   const scheme = useColorScheme();
   const theme = Colors[scheme === "dark" ? "dark" : "light"];
   const { data, config } = useThingSpeak();
   const { history, loading, error, refresh, isDemoMode } = useThingSpeakHistory(
     config,
-    100,
+    500,
+    1440,
   );
   const [refreshing, setRefreshing] = useState(false);
 
@@ -57,14 +161,87 @@ export default function AnalyticsScreen() {
 
     const sourceVals = history.map((p) => p.source);
     const overheadVals = history.map((p) => p.overhead);
-    const avg = (arr: number[]) =>
-      arr.reduce((sum, v) => sum + v, 0) / Math.max(1, arr.length);
+
+    const oldest = history[0];
+    const newest = history[history.length - 1];
+
+    const liveTime = data.lastUpdated?.getTime() ?? Date.now();
+    const spanMs = Math.max(
+      liveTime - oldest.time,
+      newest.time - oldest.time,
+      1,
+    );
+    const spanHours = spanMs / (60 * 60 * 1000);
+
+    const currentOverhead = data.overheadLevel;
+    const currentSource = data.sourceLevel;
+
+    // Build per-interval readings for z-score analysis
+    const overheadReadings = history.map((p) => ({
+      time: p.time,
+      level: p.overhead,
+    }));
+    // Append live reading as the final point
+    if (data.lastUpdated) {
+      overheadReadings.push({ time: liveTime, level: currentOverhead });
+    }
+
+    const sourceReadings = history.map((p) => ({
+      time: p.time,
+      level: p.source,
+    }));
+    if (data.lastUpdated) {
+      sourceReadings.push({ time: liveTime, level: currentSource });
+    }
+
+    // Z-score filtered overhead rate (%/hr) — positive = dropping
+    const overheadZ = zScoreRates(overheadReadings);
+    // Negate because consumption rate = how fast overhead DROPS
+    const consumptionRate = -overheadZ.filteredMean;
+    const consumptionRateLow = -overheadZ.confidence95High;
+    const consumptionRateHigh = -overheadZ.confidence95Low;
+
+    // Z-score filtered source rate (%/hr) — positive = dropping
+    const sourceZ = zScoreRates(sourceReadings);
+    const sourceDrainRate = -sourceZ.filteredMean;
+    const sourceDrainRateLow = -sourceZ.confidence95High;
+    const sourceDrainRateHigh = -sourceZ.confidence95Low;
+
+    // Time-to-empty using filtered rate (best estimate)
+    const timeToEmptyMs =
+      consumptionRate > 0
+        ? (currentOverhead / consumptionRate) * (60 * 60 * 1000)
+        : Infinity;
+    // Worst case (slowest consumption)
+    const timeToEmptyMsSlow =
+      consumptionRateHigh > 0
+        ? (currentOverhead / consumptionRateHigh) * (60 * 60 * 1000)
+        : Infinity;
+    // Best case (fastest consumption)
+    const timeToEmptyMsFast =
+      consumptionRateLow > 0
+        ? (currentOverhead / consumptionRateLow) * (60 * 60 * 1000)
+        : Infinity;
+
+    // Time-to-dry using filtered rate
+    const timeToDryMs =
+      sourceDrainRate > 0
+        ? (currentSource / sourceDrainRate) * (60 * 60 * 1000)
+        : Infinity;
+    const timeToDryMsSlow =
+      sourceDrainRateHigh > 0
+        ? (currentSource / sourceDrainRateHigh) * (60 * 60 * 1000)
+        : Infinity;
+    const timeToDryMsFast =
+      sourceDrainRateLow > 0
+        ? (currentSource / sourceDrainRateLow) * (60 * 60 * 1000)
+        : Infinity;
 
     return {
-      currentSource: sourceVals[sourceVals.length - 1],
-      currentOverhead: overheadVals[overheadVals.length - 1],
-      avgSource: avg(sourceVals),
-      avgOverhead: avg(overheadVals),
+      currentSource,
+      currentOverhead,
+      avgSource: mean(sourceVals),
+      avgOverhead: mean(overheadVals),
       minSource: Math.min(...sourceVals),
       maxSource: Math.max(...sourceVals),
       minOverhead: Math.min(...overheadVals),
@@ -72,104 +249,139 @@ export default function AnalyticsScreen() {
       count: history.length,
       oldest: history[0].time,
       newest: history[history.length - 1].time,
+      consumptionRate,
+      consumptionRateLow,
+      consumptionRateHigh,
+      timeToEmptyMs,
+      timeToEmptyMsSlow,
+      timeToEmptyMsFast,
+      sourceDrainRate,
+      sourceDrainRateLow,
+      sourceDrainRateHigh,
+      timeToDryMs,
+      timeToDryMsSlow,
+      timeToDryMsFast,
+      spanHours,
+      overheadOutliers: overheadZ.outliers,
+      overheadSamples: overheadZ.total,
+      sourceOutliers: sourceZ.outliers,
+      sourceSamples: sourceZ.total,
+      overheadStddev: overheadZ.filteredStddev,
+      sourceStddev: sourceZ.filteredStddev,
     };
-  }, [history]);
+  }, [
+    history,
+    data.sourceLevel,
+    data.overheadLevel,
+    data.lastUpdated,
+  ]);
 
   const insights = useMemo<Insight[]>(() => {
-    if (!stats || history.length < 2) return [];
-
-    const oldest = history[0];
-    const newest = history[history.length - 1];
-    const spanMs = Math.max(1, newest.time - oldest.time);
-    const spanHours = spanMs / (60 * 60 * 1000);
-
-    // Guard against degenerate windows: if the fetched readings span less than
-    // ~2 minutes, a rate (%/hr) would be a meaningless near-zero-division.
-    const tooShort =
-      spanMs < 2 * 60 * 1000 ||
-      (newest.overhead === oldest.overhead && newest.source === oldest.source);
-
-    // Overhead consumption rate (%/hr) — a drop in overhead level over time
-    const overheadDrop = oldest.overhead - newest.overhead;
-    const consumptionRate = tooShort ? 0 : overheadDrop / spanHours;
-
-    // Time-to-empty for overhead at current consumption rate
-    const timeToEmptyMs =
-      !tooShort && consumptionRate > 0
-        ? (newest.overhead / consumptionRate) * (60 * 60 * 1000)
-        : Infinity;
-
-    // Source drain rate (%/hr) — a drop in source level over time
-    const sourceDrop = oldest.source - newest.source;
-    const sourceDrainRate = tooShort ? 0 : sourceDrop / spanHours;
-
-    // Time-to-dry for source at current drain rate
-    const timeToDryMs =
-      !tooShort && sourceDrainRate > 0
-        ? (newest.source / sourceDrainRate) * (60 * 60 * 1000)
-        : Infinity;
-
     const items: Insight[] = [];
 
-    items.push({
-      label: "Overhead Consumption Rate",
-      value: tooShort
-        ? "Not enough time elapsed"
-        : consumptionRate > 0
-          ? `${consumptionRate.toFixed(1)} %/hr`
-          : "Steady / no drop",
-      icon: {
-        ios: "arrow.down.right",
-        android: "trending_down",
-        web: "trending_down",
-      },
-      color: tooShort ? "#8c8c8c" : consumptionRate > 0 ? "#ffa940" : "#52c41a",
-    });
+    if (stats) {
+      items.push({
+        label: "Overhead Consumption Rate (z-score)",
+        value: stats.consumptionRate > 0
+            ? `${stats.consumptionRate.toFixed(1)} %/hr (±${stats.overheadStddev.toFixed(1)})`
+            : "Steady / no drop",
+        icon: {
+          ios: "arrow.down.right",
+          android: "trending_down",
+          web: "trending_down",
+        },
+        color: stats.consumptionRate > 0 ? "#ffa940" : "#52c41a",
+      });
 
-    items.push({
-      label: "Est. Time to Empty (Overhead)",
-      value: tooShort ? "—" : formatHours(timeToEmptyMs),
-      icon: {
-        ios: "hourglass",
-        android: "hourglass_empty",
-        web: "hourglass_empty",
-      },
-      color: "#1890ff",
-    });
+      items.push({
+        label: "Est. Time to Empty (Overhead)",
+        value: stats.timeToEmptyMs > 0
+            ? `${formatHours(stats.timeToEmptyMs)} [${formatHours(stats.timeToEmptyMsFast)} – ${formatHours(stats.timeToEmptyMsSlow)}]`
+            : "—",
+        icon: {
+          ios: "hourglass",
+          android: "hourglass_empty",
+          web: "hourglass_empty",
+        },
+        color: "#1890ff",
+      });
 
-    items.push({
-      label: "Source Drain Rate",
-      value: tooShort
-        ? "Not enough time elapsed"
-        : sourceDrainRate > 0
-          ? `${sourceDrainRate.toFixed(1)} %/hr`
-          : "Steady / refilling",
-      icon: {
-        ios: "arrow.down.right",
-        android: "trending_down",
-        web: "trending_down",
-      },
-      color: tooShort ? "#8c8c8c" : sourceDrainRate > 0 ? "#ffa940" : "#52c41a",
-    });
+      items.push({
+        label: "Source Drain Rate (z-score)",
+        value: stats.sourceDrainRate > 0
+            ? `${stats.sourceDrainRate.toFixed(1)} %/hr (±${stats.sourceStddev.toFixed(1)})`
+            : "Steady / refilling",
+        icon: {
+          ios: "arrow.down.right",
+          android: "trending_down",
+          web: "trending_down",
+        },
+        color: stats.sourceDrainRate > 0 ? "#ffa940" : "#52c41a",
+      });
 
-    items.push({
-      label: "Est. Time to Dry (Source)",
-      value: tooShort ? "—" : formatHours(timeToDryMs),
-      icon: {
-        ios: "hourglass.bottomhalf.filled",
-        android: "hourglass_bottom",
-        web: "hourglass_bottom",
-      },
-      color: "#ff4d4f",
-    });
+      items.push({
+        label: "Est. Time to Dry (Source)",
+        value: stats.timeToDryMs > 0
+            ? `${formatHours(stats.timeToDryMs)} [${formatHours(stats.timeToDryMsFast)} – ${formatHours(stats.timeToDryMsSlow)}]`
+            : "—",
+        icon: {
+          ios: "hourglass.bottomhalf.filled",
+          android: "hourglass_bottom",
+          web: "hourglass_bottom",
+        },
+        color: "#ff4d4f",
+      });
+
+      items.push({
+        label: "Outliers Filtered",
+        value: `${stats.overheadOutliers} overhead / ${stats.sourceOutliers} source (of ${stats.overheadSamples} samples)`,
+        icon: {
+          ios: "line.3.horizontal.decrease.circle",
+          android: "filter_alt",
+          web: "filter_alt",
+        },
+        color: "#8c8c8c",
+      });
+
+      items.push({
+        label: "Data Window",
+        value: stats.spanHours < 1
+          ? `~${Math.round(stats.spanHours * 60)} min`
+          : `~${stats.spanHours.toFixed(1)} hrs`,
+        icon: {
+          ios: "clock",
+          android: "schedule",
+          web: "schedule",
+        },
+        color: "#8c8c8c",
+      });
+    }
 
     return items;
-  }, [stats, history]);
+  }, [stats]);
 
   const chartData = useMemo(() => {
-    // Use the most recent 30 readings for a readable chart
-    return history.slice(-30);
-  }, [history]);
+    const slice = history.slice(-30);
+    if (slice.length > 0 && data.lastUpdated) {
+      const last = slice[slice.length - 1];
+      if (
+        last.source !== data.sourceLevel ||
+        last.overhead !== data.overheadLevel
+      ) {
+        return [
+          ...slice.slice(0, -1),
+          {
+            time: last.time,
+            source: data.sourceLevel,
+            overhead: data.overheadLevel,
+            sourceRaw: data.sourceRaw,
+            overheadRaw: data.overheadRaw,
+          },
+        ];
+      }
+    }
+    return slice;
+  }, [history, data.sourceLevel, data.overheadLevel, data.lastUpdated]);
 
   return (
     <PageFrame
@@ -178,7 +390,7 @@ export default function AnalyticsScreen() {
       icon={{ ios: "chart.bar.fill", android: "insights", web: "insights" }}
     >
       <ThemedText type="small" themeColor="textSecondary">
-        Analytics are computed from the last {history.length || 100} readings of
+        Analytics are computed from the last {history.length || 500} readings of
         the live ThingSpeak feed mapped to the Source and Overhead tanks.
       </ThemedText>
 
@@ -219,10 +431,36 @@ export default function AnalyticsScreen() {
               ]}
             >
               <ThemedText type="small" themeColor="textSecondary">
+                Avg Source (window)
+              </ThemedText>
+              <ThemedText type="title" style={styles.statValue}>
+                {stats.avgSource.toFixed(0)}%
+              </ThemedText>
+            </View>
+            <View
+              style={[
+                styles.statCard,
+                { backgroundColor: theme.backgroundSelected + "66" },
+              ]}
+            >
+              <ThemedText type="small" themeColor="textSecondary">
                 Avg Overhead (window)
               </ThemedText>
               <ThemedText type="title" style={styles.statValue}>
                 {stats.avgOverhead.toFixed(0)}%
+              </ThemedText>
+            </View>
+            <View
+              style={[
+                styles.statCard,
+                { backgroundColor: theme.backgroundSelected + "66" },
+              ]}
+            >
+              <ThemedText type="small" themeColor="textSecondary">
+                Source range
+              </ThemedText>
+              <ThemedText type="title" style={styles.statValueSmall}>
+                {stats.minSource}% – {stats.maxSource}%
               </ThemedText>
             </View>
             <View
@@ -338,8 +576,9 @@ export default function AnalyticsScreen() {
 
         {insights.length === 0 ? (
           <ThemedText type="small" themeColor="textSecondary">
-            Load at least two readings to see usage insights. In demo mode,
-            switch to a live ThingSpeak channel.
+            {isDemoMode
+              ? "Switch to a live ThingSpeak feed to see usage insights and forecasts."
+              : "Waiting for live data. Insights and forecasts will appear once the first reading arrives."}
           </ThemedText>
         ) : (
           <View style={styles.insightsGrid}>
