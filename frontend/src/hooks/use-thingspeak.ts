@@ -245,16 +245,47 @@ export function useThingSpeak() {
         // field1/field2 null. Using a single row ensures source and overhead
         // are from the exact same timestamp — avoids the mismatch where each
         // field independently picks a different (stale) row.
-        // Feeds are ordered oldest-first; iterate all to find the NEWEST
-        // row where both sensor fields are present.
-        let matchedEntry: Record<string, any> | null = null;
+        //
+        // Feeds are ordered oldest-first. Collect all complete entries then
+        // pick the newest, but skip it if either field jumped by more than
+        // MAX_SINGLE_READING_DELTA since the previous reading — that signals
+        // a glitched sensor value (e.g. source jumping from ~5% to ~54% in
+        // 16 seconds).
+        const MAX_SINGLE_READING_DELTA = 10; // percentage points
+        const completeEntries: Record<string, any>[] = [];
         for (const entry of feeds) {
           const srcRaw = entry[`field${sourceField}`];
           const ovhRaw = entry[`field${overheadField}`];
           const srcOk = srcRaw !== null && srcRaw !== undefined && srcRaw !== "";
           const ovhOk = ovhRaw !== null && ovhRaw !== undefined && ovhRaw !== "";
           if (srcOk && ovhOk) {
-            matchedEntry = entry;
+            completeEntries.push(entry);
+          }
+        }
+
+        let matchedEntry: Record<string, any> | null = null;
+        if (completeEntries.length > 0) {
+          const last = completeEntries[completeEntries.length - 1];
+          const lastSrc = parseFloat(last[`field${sourceField}`]);
+          const lastOvh = parseFloat(last[`field${overheadField}`]);
+
+          if (completeEntries.length >= 2) {
+            const prev = completeEntries[completeEntries.length - 2];
+            const prevSrc = parseFloat(prev[`field${sourceField}`]);
+            const prevOvh = parseFloat(prev[`field${overheadField}`]);
+
+            const srcJump = Math.abs(lastSrc - prevSrc);
+            const ovhJump = Math.abs(lastOvh - prevOvh);
+
+            if (srcJump > MAX_SINGLE_READING_DELTA || ovhJump > MAX_SINGLE_READING_DELTA) {
+              // Latest reading is likely a sensor glitch — fall back to the
+              // previous complete entry.
+              matchedEntry = prev;
+            } else {
+              matchedEntry = last;
+            }
+          } else {
+            matchedEntry = last;
           }
         }
 
