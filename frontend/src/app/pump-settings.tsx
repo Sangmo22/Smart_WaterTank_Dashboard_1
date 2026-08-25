@@ -45,6 +45,14 @@ function usePumpControl() {
 
   /** Fetch or auto-create the first tank, then begin polling pump state */
   const initTank = useCallback(async () => {
+    if (!API_BASE) {
+      setError(
+        "EXPO_PUBLIC_API_URL is not set. Add it in Vercel environment variables " +
+          "and redeploy. Example: https://your-backend.onrender.com",
+      );
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
@@ -116,6 +124,7 @@ function usePumpControl() {
   }, [tankId]);
 
   useEffect(() => {
+    if (!API_BASE) return; // Don't retry if URL is not configured
     initTank();
     const retry = setInterval(() => {
       if (!tankIdRef.current) initTank();

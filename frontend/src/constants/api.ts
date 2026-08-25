@@ -15,9 +15,15 @@ const getDevApiUrl = () => {
       hostname.startsWith("10.");
 
     if (!isLocalhost) {
-      // Production web: set EXPO_PUBLIC_API_URL (e.g. your Render backend URL)
-      // at build time; falls back to same-origin if the API is co-hosted.
-      return window.location.origin;
+      // Production web: EXPO_PUBLIC_API_URL must be set at build time to
+      // point to the backend (e.g. Render). Do NOT fall back to
+      // window.location.origin — that would make the frontend call itself
+      // and get back HTML instead of JSON.
+      console.warn(
+        "EXPO_PUBLIC_API_URL is not set. API calls will fail. " +
+          "Set it in Vercel environment variables to your backend URL.",
+      );
+      return "";
     }
 
     // Local web development uses port 5000 for the backend Express server
