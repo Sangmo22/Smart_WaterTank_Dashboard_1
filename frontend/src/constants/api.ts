@@ -53,4 +53,6 @@ const getDevApiUrl = () => {
 
 const DEV_API_URL = getDevApiUrl();
 
-export const API_URL = process.env.EXPO_PUBLIC_API_URL || DEV_API_URL;
+// On localhost, always use the local backend (ignore EXPO_PUBLIC_API_URL
+// so local dev is never redirected to the production Render server).
+export const API_URL = DEV_API_URL || process.env.EXPO_PUBLIC_API_URL || "";
