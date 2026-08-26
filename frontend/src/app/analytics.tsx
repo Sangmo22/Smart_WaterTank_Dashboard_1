@@ -310,7 +310,7 @@ export default function AnalyticsScreen() {
       });
 
       items.push({
-        label: "Source Drain Rate (pump ON only)",
+        label: "Source Drain Rate",
         value: stats.sourceDrainRate > 0
             ? `${stats.sourceDrainRate.toFixed(1)} %/hr (±${stats.sourceStddev.toFixed(1)})`
             : stats.sourceSamples === 0
