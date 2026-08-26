@@ -27,7 +27,6 @@ import { useThingSpeak } from "@/hooks/use-thingspeak";
 import { useThingSpeakHistory } from "@/hooks/use-thingspeak-history";
 import { useColorScheme } from "@/hooks/use-color-scheme";
 import { usePushNotifications } from "@/hooks/use-push-notifications";
-import { usePumpControl } from "@/hooks/use-pump-control";
 import * as Notifications from "expo-notifications";
 import { alertsStore } from "@/state/alerts-store";
 
@@ -87,8 +86,6 @@ export default function HomeScreen() {
     startSimulatedFlow,
     stopSimulatedFlow,
   } = useThingSpeak();
-
-  const { pumpData, sendPumpCommand } = usePumpControl(config.isDemoMode);
 
   // Seed the history chart with the last 24 hours of ThingSpeak data
   const { history: seededHistory } = useThingSpeakHistory(config, 8000, 1440);
@@ -780,123 +777,110 @@ export default function HomeScreen() {
                     Pump Status
                   </ThemedText>
                   <ThemedText type="smallBold">
-                    {config.isDemoMode
-                      ? isSimulatingFlow ? "ON" : "OFF"
-                      : pumpData?.pumpState === 1 ? "ON" : "OFF"}
+                    {isSimulatingFlow ? "ON" : "OFF"}
                   </ThemedText>
                 </View>
               </View>
             </View>
 
             {/* Dynamic SCADA Water Channel Panel */}
-            <View
-              style={[
-                styles.pipeIndicatorCard,
-                {
-                  backgroundColor: theme.backgroundElement,
-                  borderColor: theme.backgroundSelected,
-                },
-              ]}
-            >
-              <View style={styles.pipeIndicatorHeader}>
-                <SymbolView
-                  name={{
-                    ios: "arrow.left.and.right.righttriangle.left.righttriangle.right.fill",
-                    android: "swap_horiz",
-                    web: "swap_horiz",
-                  }}
-                  size={16}
-                  tintColor={
-                    config.isDemoMode
-                      ? isSimulatingFlow ? "#52c41a" : theme.textSecondary
-                      : pumpData?.pumpState === 1 ? "#52c41a" : theme.textSecondary
-                  }
-                />
-                <ThemedText type="smallBold" style={{ fontSize: 12 }}>
-                  Pump: {config.isDemoMode
-                    ? isSimulatingFlow ? "ON" : "OFF"
-                    : pumpData?.pumpState === 1 ? "ON" : "OFF"}
-                </ThemedText>
-              </View>
-
-              {/* Liquid transfer pipeline visual component */}
-              <View style={styles.pipelineVisualContainer}>
-                <View
-                  style={[
-                    styles.pipeConnectionNode,
-                    { backgroundColor: theme.backgroundSelected },
-                  ]}
-                />
-                <View
-                  style={[
-                    styles.pipeLineSegment,
-                    { backgroundColor: theme.backgroundSelected },
-                  ]}
-                >
-                  {(config.isDemoMode ? isSimulatingFlow : pumpData?.pumpState === 1) && (
-                    <ThemedText style={styles.flowArrows} type="code">
-                      {Platform.OS === "web"
-                        ? ">>>>>>>>> PUMPING WATER >>>>>>>>>"
-                        : ">>> PUMP ACTIVE >>>"}
-                    </ThemedText>
-                  )}
-                </View>
-                <View
-                  style={[
-                    styles.pipeConnectionNode,
-                    { backgroundColor: theme.backgroundSelected },
-                  ]}
-                />
-              </View>
-
-              <Pressable
-                onPress={async () => {
-                  if (config.isDemoMode) {
-                    isSimulatingFlow ? stopSimulatedFlow() : startSimulatedFlow();
-                  } else {
-                    const nextOn = pumpData?.pumpState !== 1;
-                    await sendPumpCommand(nextOn ? 1 : 0);
-                  }
-                }}
-                style={({ pressed }) => [
-                  styles.pumpToggleButton,
+            {config.isDemoMode && (
+              <View
+                style={[
+                  styles.pipeIndicatorCard,
                   {
-                    backgroundColor:
-                      (config.isDemoMode ? isSimulatingFlow : pumpData?.pumpState === 1)
-                        ? "#ff4d4f"
-                        : "#52c41a",
+                    backgroundColor: theme.backgroundElement,
+                    borderColor: theme.backgroundSelected,
                   },
-                  pressed && { opacity: 0.8 },
                 ]}
               >
-                <SymbolView
-                  name={
-                    (config.isDemoMode ? isSimulatingFlow : pumpData?.pumpState === 1)
-                      ? { ios: "pause.fill", android: "pause", web: "pause" }
-                      : {
-                          ios: "play.fill",
-                          android: "play_arrow",
-                          web: "play_arrow",
-                        }
+                <View style={styles.pipeIndicatorHeader}>
+                  <SymbolView
+                    name={{
+                      ios: "arrow.left.and.right.righttriangle.left.righttriangle.right.fill",
+                      android: "swap_horiz",
+                      web: "swap_horiz",
+                    }}
+                    size={16}
+                    tintColor={
+                      isSimulatingFlow ? "#52c41a" : theme.textSecondary
+                    }
+                  />
+                  <ThemedText type="smallBold" style={{ fontSize: 12 }}>
+                    Pump Settings: {isSimulatingFlow ? "ON" : "OFF"}
+                  </ThemedText>
+                </View>
+
+                {/* Liquid transfer pipeline visual component */}
+                <View style={styles.pipelineVisualContainer}>
+                  <View
+                    style={[
+                      styles.pipeConnectionNode,
+                      { backgroundColor: theme.backgroundSelected },
+                    ]}
+                  />
+                  <View
+                    style={[
+                      styles.pipeLineSegment,
+                      { backgroundColor: theme.backgroundSelected },
+                    ]}
+                  >
+                    {isSimulatingFlow && (
+                      <ThemedText style={styles.flowArrows} type="code">
+                        {Platform.OS === "web"
+                          ? ">>>>>>>>> PUMPING WATER >>>>>>>>>"
+                          : ">>> PUMP ACTIVE >>>"}
+                      </ThemedText>
+                    )}
+                  </View>
+                  <View
+                    style={[
+                      styles.pipeConnectionNode,
+                      { backgroundColor: theme.backgroundSelected },
+                    ]}
+                  />
+                </View>
+
+                <Pressable
+                  onPress={
+                    isSimulatingFlow ? stopSimulatedFlow : startSimulatedFlow
                   }
-                  size={14}
-                  tintColor="#fff"
-                />
-                <ThemedText type="smallBold" style={{ color: "#fff" }}>
-                  {(config.isDemoMode ? isSimulatingFlow : pumpData?.pumpState === 1)
-                    ? "Pump OFF" : "Pump ON"}
+                  style={({ pressed }) => [
+                    styles.pumpToggleButton,
+                    {
+                      backgroundColor: isSimulatingFlow ? "#ff4d4f" : "#52c41a",
+                    },
+                    pressed && { opacity: 0.8 },
+                  ]}
+                >
+                  <SymbolView
+                    name={
+                      isSimulatingFlow
+                        ? { ios: "pause.fill", android: "pause", web: "pause" }
+                        : {
+                            ios: "play.fill",
+                            android: "play_arrow",
+                            web: "play_arrow",
+                          }
+                    }
+                    size={14}
+                    tintColor="#fff"
+                  />
+                  <ThemedText type="smallBold" style={{ color: "#fff" }}>
+                    {isSimulatingFlow ? "Pump OFF" : "Pump ON"}
+                  </ThemedText>
+                </Pressable>
+                <ThemedText
+                  type="small"
+                  themeColor="textSecondary"
+                  style={{ textAlign: "center" }}
+                >
+                  {config.isDemoMode
+                    ? "Use this to turn the simulated transfer pump on and off."
+                    : "Live pump state is shown here; the current app controls the simulation only."}
                 </ThemedText>
-              </Pressable>
-              <ThemedText
-                type="small"
-                themeColor="textSecondary"
-                style={{ textAlign: "center" }}
-              >
-                {config.isDemoMode
-                  ? "Use this to turn the simulated transfer pump on and off."
-                  : "Controls the physical pump via the backend server."}
-              </ThemedText>
-            </View>
+              </View>
+            )}
 
             {/* Error Message banner */}
             {error && !config.isDemoMode && (
