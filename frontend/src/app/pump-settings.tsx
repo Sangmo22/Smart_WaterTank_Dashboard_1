@@ -35,7 +35,7 @@ interface PumpStateData {
   pumpMode: "manual" | "auto";
 }
 
-function usePumpControl() {
+function usePumpControl(isDemo: boolean) {
   const [tankId, setTankId] = useState<string | null>(null);
   const [pumpData, setPumpData] = useState<PumpStateData | null>(null);
   const [loading, setLoading] = useState(false);
@@ -124,17 +124,18 @@ function usePumpControl() {
   }, [tankId]);
 
   useEffect(() => {
-    if (!API_BASE) return; // Don't retry if URL is not configured
+    if (isDemo || !API_BASE) return;
     initTank();
     const retry = setInterval(() => {
       if (!tankIdRef.current) initTank();
     }, 5000);
     return () => clearInterval(retry);
-  }, [initTank]);
+  }, [initTank, isDemo]);
 
   /** Send a manual pump command (0 = OFF, 1 = ON) */
   const sendPumpCommand = useCallback(
     async (state: 0 | 1): Promise<boolean> => {
+      if (isDemo) return true;
       if (!tankId) {
         setError("Not connected to the backend — pump command was not sent.");
         return false;
@@ -161,7 +162,7 @@ function usePumpControl() {
         setSendingCmd(false);
       }
     },
-    [tankId],
+    [tankId, isDemo],
   );
 
   return { tankId, pumpData, loading, sendingCmd, error, sendPumpCommand };
@@ -181,7 +182,7 @@ export default function PumpSettingsScreen() {
   } = useThingSpeak();
 
   const { pumpData, sendingCmd, error, sendPumpCommand } =
-    usePumpControl();
+    usePumpControl(config.isDemoMode);
 
 
   // ── Safety gate ──────────────────────────────────────────────────────────────
