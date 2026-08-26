@@ -12,18 +12,19 @@ const ErrorResponse = require('./utils/errorResponse');
 
 const app = express();
 
-// 1. Security Headers
-app.use(helmet());
+// 1. Security Headers (disable cross-origin policies that conflict with CORS)
+app.use(helmet({
+  crossOriginResourcePolicy: false,
+  crossOriginOpenerPolicy: false,
+  crossOriginEmbedderPolicy: false,
+}));
 
-// 2. CORS Configuration for Expo Frontends
-const corsOrigin = process.env.CORS_ORIGIN || '*';
-const corsOptions = {
-  origin: corsOrigin === '*' ? '*' : corsOrigin.split(','),
+// 2. CORS — allow the Vercel frontend and any other origin
+app.use(cors({
+  origin: '*',
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: corsOrigin !== '*' // Credentials cannot be true when origin is wildcard
-};
-app.use(cors(corsOptions));
+}));
 
 // 3. Request Logging
 if (process.env.NODE_ENV !== 'test') {
