@@ -7,6 +7,7 @@ export interface TankHistoryPoint {
   overhead: number; // 0 - 100
   sourceRaw: number;
   overheadRaw: number;
+  pumpOn: boolean; // true when pump is running
 }
 
 interface UseThingSpeakHistoryResult {
@@ -111,6 +112,7 @@ export function useThingSpeakHistory(
             ),
             sourceRaw,
             overheadRaw,
+            pumpOn: feed.field3 === "1" || feed.field3 === 1,
           };
         })
         .filter((point: any) => point !== null);

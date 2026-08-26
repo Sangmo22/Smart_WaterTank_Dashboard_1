@@ -28,6 +28,7 @@ export interface TankData {
   overheadRaw: number;
   lastUpdated: Date | null;
   channelName: string;
+  pumpOn: boolean; // true when pump field3 = 1
 }
 
 export const DEFAULT_CONFIG: ThingSpeakConfig = {
@@ -82,6 +83,7 @@ export function useThingSpeak() {
     overheadRaw: 40,
     lastUpdated: null,
     channelName: "Demo Water Tank Feed",
+    pumpOn: false,
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -306,6 +308,7 @@ export function useThingSpeak() {
           };
           const sourceReading = latestForField(sourceField);
           const overheadReading = latestForField(overheadField);
+          const pumpReading = latestForField(3); // field3 = pump status
           if (!sourceReading && !overheadReading) {
             throw new Error(
               `Fields ${sourceField} and ${overheadField} have no data in the recent feed.`,
@@ -342,6 +345,7 @@ export function useThingSpeak() {
             overheadRaw,
             lastUpdated: lastUpdatedStr ? new Date(lastUpdatedStr) : new Date(),
             channelName: channelInfo.name || `Channel ${channelId}`,
+            pumpOn: pumpReading?.value === 1,
           });
           return;
         }
@@ -370,6 +374,7 @@ export function useThingSpeak() {
           overheadRaw,
           lastUpdated: lastUpdatedStr ? new Date(lastUpdatedStr) : new Date(),
           channelName: channelInfo.name || `Channel ${channelId}`,
+          pumpOn: matchedEntry.field3 === "1" || matchedEntry.field3 === 1,
         });
       } catch (err: any) {
         setError(err?.message || "Failed to fetch data from ThingSpeak");
@@ -413,6 +418,7 @@ export function useThingSpeak() {
         overheadRaw: simulatedLevels.overhead,
         lastUpdated: new Date(),
         channelName: "Demo Water Tank Feed",
+        pumpOn: isSimulatingFlow,
       });
     } else {
       // Live mode: fetch immediately then poll

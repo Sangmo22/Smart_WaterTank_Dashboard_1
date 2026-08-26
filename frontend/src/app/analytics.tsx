@@ -186,11 +186,14 @@ export default function AnalyticsScreen() {
       overheadReadings.push({ time: liveTime, level: currentOverhead });
     }
 
-    const sourceReadings = history.map((p) => ({
-      time: p.time,
-      level: p.source,
-    }));
-    if (data.lastUpdated) {
+    // Source drain rate: only consider intervals where the pump was ON.
+    // When the pump is off, source level barely changes, which would drag
+    // the average drain rate toward zero and produce misleading forecasts.
+    const sourceReadings = history
+      .filter((p) => p.pumpOn)
+      .map((p) => ({ time: p.time, level: p.source }));
+    // Append live reading only if pump is currently ON
+    if (data.lastUpdated && data.pumpOn) {
       sourceReadings.push({ time: liveTime, level: currentSource });
     }
 
@@ -307,10 +310,12 @@ export default function AnalyticsScreen() {
       });
 
       items.push({
-        label: "Source Drain Rate (z-score)",
+        label: "Source Drain Rate (pump ON only)",
         value: stats.sourceDrainRate > 0
             ? `${stats.sourceDrainRate.toFixed(1)} %/hr (±${stats.sourceStddev.toFixed(1)})`
-            : "Steady / refilling",
+            : stats.sourceSamples === 0
+              ? "No pump-ON data yet"
+              : "Steady / refilling",
         icon: {
           ios: "arrow.down.right",
           android: "trending_down",
