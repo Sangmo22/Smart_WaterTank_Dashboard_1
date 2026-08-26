@@ -34,7 +34,7 @@ export const DEFAULT_CONFIG: ThingSpeakConfig = {
   channelId: "3420273",
   readApiKey: "WZV2KJC22K3ZDNGM",
   isDemoMode: false,
-  pollingIntervalMs: 20000,
+  pollingIntervalMs: 15000,
 
   // Source Tank → Field 2
   sourceField: 2,
